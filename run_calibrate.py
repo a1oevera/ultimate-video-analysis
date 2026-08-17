@@ -41,10 +41,16 @@ KEYPOINT_LABELS = {
     6: "cone: far-right goal corner",
     7: "cone: far-left back corner",
     8: "cone: far-right back corner",
-    9: "brick mark: near",
-    10: "brick mark: far",
+    9: "brick mark: near (often not marked on recreational/coned fields -- skip freely)",
+    10: "brick mark: far (often not marked on recreational/coned fields -- skip freely)",
 }
-order = list(cfg.CALIBRATION_INDICES)
+# Prompt order prioritizes the goal-line + far-back corners (measured most
+# likely to actually be visible/marked) before the two commonly-unreliable
+# groups: near-back corners (often off-camera, closest to the camera) and
+# brick marks (often not painted at all on recreational/coned fields) -- so a
+# quick run front-loads the points you'll actually use instead of skipping
+# through unreliable ones first. Still only need >=4 total, from anywhere.
+order = [3, 4, 5, 6, 7, 8, 1, 2, 9, 10]
 
 # display at a manageable size if the source is large (e.g. a wide mosaic);
 # clicks are mapped back to ORIGINAL image coordinates before saving

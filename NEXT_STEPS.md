@@ -132,6 +132,15 @@ real yet — that's on you to try with `python run_calibrate.py
 outputs/mosaic_sample.jpg`. Next: run it for real, then wire `is_in_field`
 into the B3 detections to filter out sideline/bench people.
 
+**Known constraint (from the person, not yet re-verified against this
+footage): brick marks aren't painted on most fields**, especially
+recreational/coned ones — same unreliability class as the near-back corners.
+`run_calibrate.py`'s prompt order already reflects this (goal-line + far-back
+corners first, near-back corners and brick marks last, skip freely). Worst
+case that leaves 6 reliable points (the 4 goal-line corners + 2 far-back
+corners) — still comfortably above the 4-point minimum, but don't assume
+brick marks will be there; treat them as a bonus, not a plan.
+
 ### B3. Train YOLO on ultimate footage
 
 **✅ Zero-training feasibility test DONE** (see `results/detection_finding.md`,

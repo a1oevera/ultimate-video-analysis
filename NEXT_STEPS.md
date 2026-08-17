@@ -104,6 +104,18 @@ boundaries (cuts, close-ups), not registration bugs, once this fix is in.
   disc — moot anyway now that disc detection is parked).
 
 ### B3. Train YOLO on ultimate footage
+
+**✅ Zero-training feasibility test DONE** (see `results/detection_finding.md`,
+`run_player_detection_test.py`): COCO-pretrained YOLO11n, no ultimate-specific
+training at all, run at native resolution (`imgsz=1920`, NOT YOLO's own
+640px default) gets real detection coverage across the whole visible field,
+including far-side players. At the 640px default it completely missed the
+entire field of play (0 detections there) — a resolution artifact, not a
+capability gap; fixed by not downscaling. This de-risks B3: a first working
+player-position pipeline may not require the full fine-tuning investment
+below before something end-to-end exists — fine-tuning still matters for
+production-quality recall/precision and anything beyond generic "person".
+
 - Pretrain person detection on pro footage, fine-tune on the person's own.
 - Seed annotation candidates found on Roboflow Universe (all CC-BY-4.0;
   downloading any of them needs a free Roboflow account + API key, not yet
@@ -117,8 +129,9 @@ boundaries (cuts, close-ups), not registration bugs, once this fix is in.
     521 images, disc/observer/player classes.
   - (Disc-focused ones exist too — [Ultimate Frisbee Disc Detector](https://universe.roboflow.com/eelke-van-foeken-sfimp/ultimate-frisbee-disc-detector),
     509 images — not needed for #3/#4, keep in mind if disc detection is revisited.)
-- Measure far-side-player recall specifically (partial-field framing makes small
-  players common).
+- Next: track detections across frames (not just per-frame boxes), and
+  quantify far-side recall properly (this test eyeballed one frame — a real
+  measurement needs ground truth to compare against).
 
 ### B4. Player identity across pans (metric #3)
 - Re-anchor identity at each pull (wide shot, 7 spaced players — best identity

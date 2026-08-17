@@ -42,12 +42,20 @@ bet), or rescoping to metrics #3/#4 (play time, speed/distance), which don't
 need possession. See `NEXT_STEPS.md` and `results/tuning_finding.md`.
 
 **Decision (2026-08-17): rescoped to Track B, metrics #3/#4.** Real footage
-is now available (`videos/`, gitignored — not redistributed). B1's
-mosaic-registration feasibility question is **CONFIRMED**: wide-framed
-background (treeline, tents) registers reliably via ORB+RANSAC (74–84 inliers
-at realistic short time gaps); tight close-ups don't (0 inliers, as
-predicted) and need pose interpolation rather than forced registration. See
-`results/mosaic_finding.md`.
+is now available (`videos/`, gitignored — not redistributed).
+
+- **B1 (mosaic registration): CONFIRMED.** Wide-framed background (treeline,
+  tents) registers reliably via ORB+RANSAC (74–84 inliers at realistic short
+  time gaps); tight close-ups don't (0 inliers, as predicted) and need pose
+  interpolation rather than forced registration. Built the real pipeline
+  (`frisbee_analysis/mosaic.py`), not just the test — which caught and fixed
+  a real bug (a stale registration anchor across a broadcast cut) and
+  produced a visually-verified stitched mosaic. See `results/mosaic_finding.md`.
+- **B3 (player detection), zero-training feasibility: STRONG.** Off-the-shelf
+  COCO-pretrained YOLO, run at native resolution (NOT the library's own
+  640px default, which completely missed the field of play), gets real
+  detection coverage across the whole field including far-side players. See
+  `results/detection_finding.md`.
 
 ## What's here
 
@@ -58,21 +66,28 @@ frisbee_analysis/         the package
   features.py             kinematic + marking features
   possession.py           HMM/Viterbi possession detector + naive baseline
   evaluate.py             transition metrics + event derivation
-  ultimate_config.py      WFDF field geometry (for the future CV pipeline)
-run_pivot_test.py         the pivot-rule viability test (runs on real data)
-run_viability.py          hand-set-config harness (frame acc, transition F1, turnovers)
-run_tune.py               cross-validated search + honest go/no-go verdict
+  ultimate_config.py      WFDF field geometry (Track B)
+  mosaic.py               Track B: frame-to-mosaic registration (optional cv2 import)
+run_pivot_test.py         Track A: the pivot-rule viability test (runs on real data)
+run_viability.py          Track A: hand-set-config harness (frame acc, transition F1, turnovers)
+run_tune.py               Track A: cross-validated search + honest go/no-go verdict
+run_mosaic_test.py        Track B: mosaic-registration pipeline test (needs real footage)
+run_mosaic_visualize.py   Track B: builds an actual stitched mosaic image
+run_player_detection_test.py  Track B: zero-training YOLO feasibility test
 ufatrack_data/            the real UFATrack dataset (20 possessions, CC-BY-4.0)
+videos/                   real footage (gitignored — not committed/redistributed)
+outputs/                  generated images e.g. mosaics, detections (gitignored)
 NEXT_STEPS.md             prioritised task list for continuing
 CONTEXT.md                full design rationale + decisions made + dead ends
-results/pivot_finding.md    the measured pivot-rule result, written up
-results/tuning_finding.md   the measured tuning + go/no-go result, written up
-results/mosaic_finding.md   the measured B1 mosaic-registration feasibility result
-videos/                     real footage (gitignored — not committed/redistributed)
+results/pivot_finding.md      the measured pivot-rule result, written up
+results/tuning_finding.md     the measured tuning + go/no-go result, written up
+results/mosaic_finding.md     the measured B1 mosaic-registration feasibility result
+results/detection_finding.md  the measured B3 zero-training detection feasibility result
 ```
 
 ## Run it
 
+Track A (no GPU, no video needed):
 ```bash
 pip install numpy scipy
 python run_pivot_test.py     # the pivot-rule signal on real data
@@ -80,7 +95,12 @@ python run_viability.py      # hand-set configs: frame acc, transition F1, turno
 python run_tune.py           # cross-validated search -- the actual go/no-go number
 ```
 
-Both default to `ufatrack_data/`. No GPU, no video needed.
+Track B (needs `pip install -r requirements.txt`'s full list, and real footage in `videos/`):
+```bash
+python run_mosaic_test.py videos/your_clip.mp4 <start_sec> <duration_sec> <sample_fps>
+python run_mosaic_visualize.py videos/your_clip.mp4 outputs/mosaic.jpg <start_sec> <duration_sec> <sample_fps>
+python run_player_detection_test.py videos/your_clip.mp4 <t_sec> outputs/detections.jpg
+```
 
 ## The one rule that matters most
 

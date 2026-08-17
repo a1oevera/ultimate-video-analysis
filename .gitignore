@@ -12,3 +12,4 @@ venv/
 runs/
 videos/*
 !videos/.gitkeep
+outputs/

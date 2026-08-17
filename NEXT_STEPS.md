@@ -118,6 +118,20 @@ call already made for identity in `CONTEXT.md`. Revisit automated detection
 (grass masking + orientation filtering + cone color detection) only if manual
 calibration becomes the actual bottleneck.
 
+**✅ Manual calibration tool BUILT**: `frisbee_analysis/calibration.py`
+(`fit_calibration`, `pixel_to_field`, `field_to_pixel`, `is_in_field`,
+`draw_field_overlay`) + `run_calibrate.py` (interactive — click keypoints on
+a mosaic image, 's' to skip an off-camera one, needs >=4 total). A cone being
+off-camera doesn't block calibration: verified with a synthetic-homography
+test that fitting from 8 of the 10 keypoints (skipping the two near-back
+corners closest to the camera — confirmed the common case on this footage)
+recovers the position of the two SKIPPED points to ~0cm error, and correctly
+computes the far goal line's position without ever seeing its cones. The
+interactive click loop itself needs a real display and hasn't been run for
+real yet — that's on you to try with `python run_calibrate.py
+outputs/mosaic_sample.jpg`. Next: run it for real, then wire `is_in_field`
+into the B3 detections to filter out sideline/bench people.
+
 ### B3. Train YOLO on ultimate footage
 
 **✅ Zero-training feasibility test DONE** (see `results/detection_finding.md`,

@@ -97,11 +97,35 @@ boundaries (cuts, close-ups), not registration bugs, once this fix is in.
 
 ### B2. Reuse roboflow/sports (MIT) — lift, don't rewrite
 - `ViewTransformer` (homography) — use as-is with `ultimate_config.py` keypoints.
-- `TeamClassifier` (SigLIP+UMAP+KMeans) — deprioritized, see note above.
+- `TeamClassifier` (SigLIP+UMAP+KMeans) — can't run on this machine at all
+  (needs `transformers`' torch backend, unavailable — torch capped at 2.2.2
+  on Intel macOS). Built a lightweight replacement instead, see below.
 - pitch-config + annotator pattern — `ultimate_config.py` already matches it;
   gives the minimap for free.
 - Do NOT use their soccer .pt weights or their `BallTracker` (naive; fails on a
   disc — moot anyway now that disc detection is parked).
+
+**Decision (2026-08-17): descope individual player identity for now — team
+assignment only.** Per-player tracking measured badly fragmented (see B3
+below); team is a per-frame property that doesn't need identity continuity
+at all, so this sidesteps that problem rather than trying to solve it. Metric
+#3 (play time PER PLAYER) is on hold under this scope; metric #4
+(speed/distance) can be reported as team-level aggregates instead of
+per-player. B4's re-anchor/appearance-matching design stays as the documented
+path if/when individual identity comes back into scope.
+
+**✅ Team classification BUILT and working**: `run_team_classify_test.py`
+(see `results/team_classify_finding.md`). Four attempts at joint hue/color
+k-means all failed — same-team players kept splitting across clusters,
+because a genuinely low-saturation team (white jerseys) gets outvoted by
+clustering built around finding hue variation. Fix: split on saturation
+FIRST (a threshold, not a cluster) to separate white/grey from colored, THEN
+cluster hue only within the colored group. For this game's white-vs-maroon
+matchup, confirmed correct by eye — both teams' players now group
+consistently, where every earlier attempt split them. Known remaining
+contamination: sideline/bench people still get classified into one team or
+the other — same fix as B3/B4, filter through `is_in_field()` once
+`run_calibrate.py` has been run for real.
 
 **Field-calibration keypoint detection: MEASURED HARD, not automated yet**
 (see `results/calibration_finding.md`). Tried Hough line detection on the
@@ -183,15 +207,18 @@ test eyeballed one frame; the tracking test measured persistence, not
 accuracy) — lower priority now that fragmentation is the confirmed binding
 constraint, not raw detection quality.
 
-### B4. Player identity across pans (metric #3)
+### B4. Player identity across pans (metric #3) — ON HOLD, descoped for now
+Per the B2 decision above, individual identity is parked in favor of
+team-level classification only. This design stays documented (and well
+motivated by B3's tracking finding — naive tracking fragments ~90% of the
+time on real footage) for if/when per-player metric #3 comes back into
+scope; not active work right now.
 - Re-anchor identity at each pull (wide shot, 7 spaced players — best identity
   frame, ~once per point).
-- Per-tracklet appearance voting (SigLIP embeddings) + estimated height from
-  homography + 7-per-team constraint (Hungarian assignment).
-- Motivated by measurement now, not just prior expectation — see B3's
-  tracking finding above: naive tracking fragments ~90% of the time on real
-  footage, so identity has to be resolved per-tracklet against a clean
-  reference (the pull formation), not carried through continuously.
+- Per-tracklet appearance voting (SigLIP embeddings, which can't run on this
+  machine — see B2 — so this would need a different platform anyway) +
+  estimated height from homography + 7-per-team constraint (Hungarian
+  assignment).
 
 ### B5. Emit Track-schema rows from the CV pipeline
 The whole point of `schema.py`: the CV pipeline's job is to output the SAME

@@ -41,6 +41,14 @@ real option is disc detection as a *primary* signal (not sidestepped by this
 bet), or rescoping to metrics #3/#4 (play time, speed/distance), which don't
 need possession. See `NEXT_STEPS.md` and `results/tuning_finding.md`.
 
+**Decision (2026-08-17): rescoped to Track B, metrics #3/#4.** Real footage
+is now available (`videos/`, gitignored — not redistributed). B1's
+mosaic-registration feasibility question is **CONFIRMED**: wide-framed
+background (treeline, tents) registers reliably via ORB+RANSAC (74–84 inliers
+at realistic short time gaps); tight close-ups don't (0 inliers, as
+predicted) and need pose interpolation rather than forced registration. See
+`results/mosaic_finding.md`.
+
 ## What's here
 
 ```
@@ -59,6 +67,8 @@ NEXT_STEPS.md             prioritised task list for continuing
 CONTEXT.md                full design rationale + decisions made + dead ends
 results/pivot_finding.md    the measured pivot-rule result, written up
 results/tuning_finding.md   the measured tuning + go/no-go result, written up
+results/mosaic_finding.md   the measured B1 mosaic-registration feasibility result
+videos/                     real footage (gitignored — not committed/redistributed)
 ```
 
 ## Run it

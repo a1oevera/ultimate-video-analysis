@@ -65,21 +65,24 @@ time and speed/distance are per-player, team-agnostic) — deprioritize that
 half of B2 unless disc detection / possession comes back into scope. Its
 `ViewTransformer` (homography) IS still needed.
 
-Footage reality (from the person): existing footage only, fixed high mount that
-pans/tilts/zooms, **often only part of the field visible per frame**, sometimes
-lined / sometimes coned fields. **Blocking on footage right now** (2026-08-17)
-— nothing to register/train against until real clips are added, e.g. under
-`videos/` (already present, empty).
+Footage reality: a ~90 min broadcast recording is in `videos/` (gitignored —
+too large + not ours to redistribute). Confirms the predicted constraint —
+fixed elevated camera that pans/tilts/zooms hard, swinging between wide
+full-field shots and tight close-ups with no field context. Lined field, rich
+treeline/tent background.
 
-### B1. Mosaic-registration feasibility test *(second cheap experiment, do first once footage exists)*
-Because only part of the field is visible per frame, per-frame calibration often
-has too few field points. The fixed mount saves you: register each frame to a
-pre-built mosaic of the whole field via BACKGROUND features.
-- Extract ~10 frames from one clip, including grass-only frames.
-- Try `cv2` ORB/SIFT feature matching to stitch/register them.
-- **If background is too texture-poor to register markerless frames, metrics
-  #3/#4 degrade badly.** Find this out before building. (Depends on what
-  surrounds the specific fields — treeline/buildings good, open park bad.)
+### B1. ✅ DONE — mosaic-registration feasibility CONFIRMED
+Measured with real ORB+RANSAC registration on 12 sampled frames (see
+`results/mosaic_finding.md`): wide-to-wide frame pairs register solidly
+(74–84 RANSAC inliers at realistic 2–5s gaps, 16+ even 63 min apart) — this
+footage's background (treeline, tents) has enough texture. Tight close-up
+frames get 0 inliers, as expected — no shared background to match. **Required
+design constraint surfaced by the test:** the pipeline needs per-frame
+quality gating (skip/interpolate registration below an inlier threshold,
+~15–20) rather than forcing a homography through every frame, and must mask
+static broadcast overlay graphics (scoreboard, watermark) before feature
+detection. Next: build the actual mosaic + per-frame registration pipeline
+with that gating built in, not bolted on after.
 
 ### B2. Reuse roboflow/sports (MIT) — lift, don't rewrite
 - `ViewTransformer` (homography) — use as-is with `ultimate_config.py` keypoints.

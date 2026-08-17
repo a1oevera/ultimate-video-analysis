@@ -42,31 +42,36 @@ feature set itself doesn't carry enough signal for possession, and tuning
 can't manufacture signal that isn't there — it can actively hurt on this
 little data (see the overfitting result in `results/tuning_finding.md`).
 
-**Active next step — pick one:**
-- **Disc detection as a PRIMARY signal**, not an assist. This is the hard CV
-  problem the project originally bet against needing — that bet didn't pay
-  off, so this is back on the table if turnovers/passes stay the goal.
-- **Rescope to metrics #3/#4** (play time, speed/distance), which don't need
-  possession at all. Already scoped as "still a real project" — see Track B
-  below, specifically B1 (mosaic registration) and B3/B4 (identity), which
-  matter for #3/#4 independent of whether possession ever works.
+**Decision made (2026-08-17): rescope to metrics #3/#4** (play time,
+speed/distance) — turnovers/passes are dropped since they needed possession,
+which didn't pan out. Disc detection as a primary signal stays parked, not
+ruled out; revisit it if priorities change later. Active work is now Track B
+below, specifically B1 (mosaic registration) and B3/B4 (identity) — #3/#4
+never needed possession, so this isn't gated on A1–A4.
 
 ---
 
-## Track B — CV pipeline (needs footage + GPU)
+## Track B — CV pipeline (rescoped to metrics #3/#4: play time, speed/distance)
 
-A4 came back NO-GO on possession (turnovers/passes), so B2 (team classifier
-for offense/defense split, used by the possession emission model) is on hold
-pending the disc-detection-as-primary-signal decision above. B1/B3/B4 are
-NOT gated on that — they serve metrics #3/#4 (play time, speed/distance),
-which never needed possession — so they're valid to start now if that's the
-direction chosen.
+**Environment set up (2026-08-17):** `requirements.txt`'s Track B deps
+(ultralytics, supervision, umap-learn, transformers, torch, opencv-python,
+roboflow/sports) are installed. **This laptop is an Intel Mac with an AMD
+GPU — no ROCm on macOS, so `torch` runs CPU-only here.** Fine for wiring and
+testing code; real YOLO training needs a different machine (cloud GPU, or an
+Apple Silicon / NVIDIA machine) — don't try to train at scale on this one.
+
+B2's `TeamClassifier` (offense/defense split) isn't required for #3/#4 (play
+time and speed/distance are per-player, team-agnostic) — deprioritize that
+half of B2 unless disc detection / possession comes back into scope. Its
+`ViewTransformer` (homography) IS still needed.
 
 Footage reality (from the person): existing footage only, fixed high mount that
 pans/tilts/zooms, **often only part of the field visible per frame**, sometimes
-lined / sometimes coned fields.
+lined / sometimes coned fields. **Blocking on footage right now** (2026-08-17)
+— nothing to register/train against until real clips are added, e.g. under
+`videos/` (already present, empty).
 
-### B1. Mosaic-registration feasibility test *(second cheap experiment)*
+### B1. Mosaic-registration feasibility test *(second cheap experiment, do first once footage exists)*
 Because only part of the field is visible per frame, per-frame calibration often
 has too few field points. The fixed mount saves you: register each frame to a
 pre-built mosaic of the whole field via BACKGROUND features.
@@ -78,15 +83,26 @@ pre-built mosaic of the whole field via BACKGROUND features.
 
 ### B2. Reuse roboflow/sports (MIT) — lift, don't rewrite
 - `ViewTransformer` (homography) — use as-is with `ultimate_config.py` keypoints.
-- `TeamClassifier` (SigLIP+UMAP+KMeans) — use as-is for offense/defense split.
+- `TeamClassifier` (SigLIP+UMAP+KMeans) — deprioritized, see note above.
 - pitch-config + annotator pattern — `ultimate_config.py` already matches it;
   gives the minimap for free.
 - Do NOT use their soccer .pt weights or their `BallTracker` (naive; fails on a
-  disc). Train your own YOLO; keep disc as a secondary signal.
+  disc — moot anyway now that disc detection is parked).
 
 ### B3. Train YOLO on ultimate footage
 - Pretrain person detection on pro footage, fine-tune on the person's own.
-- Seed annotation from the two Roboflow Universe *ultimate* datasets.
+- Seed annotation candidates found on Roboflow Universe (all CC-BY-4.0;
+  downloading any of them needs a free Roboflow account + API key, not yet
+  set up here):
+  - [Ultimate Player](https://universe.roboflow.com/ultimetrics/ultimate-player) —
+    1,626 images, player class, pretrained model available. Best fit for
+    #3/#4 (player-only, no disc/team clutter).
+  - [Tracking](https://universe.roboflow.com/frisbee-tracker/tracking-w8biu) —
+    423 images, frisbee/observer/player classes.
+  - [Frisbee Tracking](https://universe.roboflow.com/tracking-f1jov/frisbee-tracking) —
+    521 images, disc/observer/player classes.
+  - (Disc-focused ones exist too — [Ultimate Frisbee Disc Detector](https://universe.roboflow.com/eelke-van-foeken-sfimp/ultimate-frisbee-disc-detector),
+    509 images — not needed for #3/#4, keep in mind if disc detection is revisited.)
 - Measure far-side-player recall specifically (partial-field framing makes small
   players common).
 

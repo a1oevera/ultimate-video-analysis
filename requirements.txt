@@ -1,12 +1,23 @@
 # Track A (this package) — coordinate-space possession logic, no GPU
-numpy>=1.24
+numpy<2               # pinned: torch on this platform is ABI-locked to numpy 1.x, see below
 scipy>=1.10
 
-# Track B (future CV pipeline) — needs a GPU, install when you start it:
-# ultralytics          # YOLO
-# supervision          # detection/tracking/annotation utilities (roboflow)
-# umap-learn           # for TeamClassifier
-# transformers         # SigLIP embeddings for team classification
-# torch                # backend
-# opencv-python        # homography, mosaic registration
-# git+https://github.com/roboflow/sports.git   # homography + team classifier to lift
+# Track B (CV pipeline) — rescoped to metrics #3/#4 (play time, speed/distance).
+# PLATFORM NOTE (measured 2026-08-17 on an Intel MacBook Pro / AMD Radeon Pro
+# 560X): PyPI stopped shipping torch wheels for Intel macOS after 2.2.2, so
+# this machine is capped at torch==2.2.2 forever via pip. Its MPS (Metal)
+# backend DOES work on this discrete AMD GPU (verified: real tensor ops run
+# on 'mps' device) -- correcting an earlier assumption that AMD-on-macOS means
+# CPU-only. But torch 2.2.2 is too old for `transformers`' torch backend
+# (needs >=2.5), so SigLIP-based TeamClassifier (part of B2, already
+# deprioritized -- #3/#4 don't need team split) won't run here. YOLO
+# (ultralytics) doesn't depend on transformers, so B3 detection/tracking work
+# is fine on this box for wiring/testing; do real training runs elsewhere
+# (cloud GPU, or an Apple Silicon / NVIDIA machine with current torch).
+ultralytics          # YOLO
+supervision          # detection/tracking/annotation utilities (roboflow)
+umap-learn           # for TeamClassifier
+transformers         # SigLIP embeddings for team classification (torch backend unavailable on this platform, see above)
+torch                # backend; capped at 2.2.2 on Intel macOS
+opencv-python        # homography, mosaic registration
+git+https://github.com/roboflow/sports.git   # homography + team classifier to lift

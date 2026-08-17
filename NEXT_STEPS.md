@@ -167,15 +167,31 @@ production-quality recall/precision and anything beyond generic "person".
     521 images, disc/observer/player classes.
   - (Disc-focused ones exist too — [Ultimate Frisbee Disc Detector](https://universe.roboflow.com/eelke-van-foeken-sfimp/ultimate-frisbee-disc-detector),
     509 images — not needed for #3/#4, keep in mind if disc detection is revisited.)
-- Next: track detections across frames (not just per-frame boxes), and
-  quantify far-side recall properly (this test eyeballed one frame — a real
-  measurement needs ground truth to compare against).
+**✅ Multi-frame tracking DONE, confirms B4's plan is necessary, not
+optional** (see `results/tracking_finding.md`, `run_tracking_test.py`).
+YOLO + ByteTrack over two real 15s/120-frame windows: only 12% (tight,
+cluttered scene) and 4% (wide, panning scene) of created track IDs survive
+≥80% of the window — ~90% of IDs are fragments, not real persistent
+identities. Confirms, on real footage, what `CONTEXT.md` already ruled out as
+a dead end ("tag once, track all game" doesn't survive occlusion). Naive
+continuous tracking is NOT usable for play-time/identity on its own — this
+is exactly why B4's re-anchor + per-tracklet approach exists, not a reason to
+reconsider it.
+
+Next: quantify far-side recall properly against ground truth (the detection
+test eyeballed one frame; the tracking test measured persistence, not
+accuracy) — lower priority now that fragmentation is the confirmed binding
+constraint, not raw detection quality.
 
 ### B4. Player identity across pans (metric #3)
 - Re-anchor identity at each pull (wide shot, 7 spaced players — best identity
   frame, ~once per point).
 - Per-tracklet appearance voting (SigLIP embeddings) + estimated height from
   homography + 7-per-team constraint (Hungarian assignment).
+- Motivated by measurement now, not just prior expectation — see B3's
+  tracking finding above: naive tracking fragments ~90% of the time on real
+  footage, so identity has to be resolved per-tracklet against a clean
+  reference (the pull formation), not carried through continuously.
 
 ### B5. Emit Track-schema rows from the CV pipeline
 The whole point of `schema.py`: the CV pipeline's job is to output the SAME

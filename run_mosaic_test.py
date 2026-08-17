@@ -25,7 +25,7 @@ start_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
 duration_sec = float(sys.argv[3]) if len(sys.argv) > 3 else 120.0
 sample_fps = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0
 
-OVERLAY_BOXES = [(0, 0, 700, 150), (1750, 0, 1920, 120)]  # this broadcast's scoreboard + watermark
+OVERLAY_BOXES = [(0, 0, 700, 150), (1750, 0, 1920, 120), (0, 860, 1920, 950)]  # scoreboard, watermark, captions band
 
 cap = cv2.VideoCapture(video_path)
 if not cap.isOpened():

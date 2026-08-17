@@ -87,6 +87,43 @@ at all" correctly, but only running the actual sequential pipeline on a
 sustained, real stretch of footage surfaced this failure mode. Keep testing
 the real code, not just the underlying primitive.
 
+## Addendum: visual sanity check (built the actual stitched image)
+
+Numbers (inlier counts, segment sizes) are one kind of evidence; actually
+looking at the composited mosaic is another, and it caught something the
+numbers didn't. Built `run_mosaic_visualize.py`, which warps each frame in a
+segment into the segment's shared coordinate system via `cv2.warpPerspective`
+and blends them onto one canvas — a real stitched panorama, not a metric.
+
+**First result**: the canvas legitimately grew wider than a single frame
+(4855×1960 vs. 1920×1080 for a 14-frame, 5-minute segment), and the extra
+area showed real content no single frame captured (a school bus, extra tents,
+more treeline) — the alignment holding across that extra area, without the
+treeline or tents doubling at the seams, is a real positive confirmation of
+B1 beyond what the pairwise inlier-count numbers alone show.
+
+**But it also surfaced a masking gap the numeric test missed**: the
+scoreboard/watermark boxes were excluded from *feature detection* (as
+already covered above) but NOT from the final *compositing* step — so the
+broadcast overlay, which is fixed to the screen rather than the world, got
+warped into a different world position per frame and showed up as ghosted
+duplicate scoreboard/caption text in the mosaic. Fixed by also zeroing those
+regions in the per-frame blend weight, not just the ORB detection mask.
+`frisbee_analysis/mosaic.py`'s registration wasn't wrong — the visualization
+script's compositing step was incomplete. A closed-captions band
+("we are experiencing audio difficulties...") needed the same treatment.
+
+A faint rectangular tint remains in the sky region of the final image even
+after widening the mask; changing the mask boundary didn't move it, so it's
+most likely brightness/exposure variation between blended frames' sky
+content rather than a residual watermark or a registration error. Not
+pursued further: sky content has zero relevance to player tracking, speed,
+or field position, which is all this pipeline is actually for.
+
+**Takeaway**: build the visual, not just the metric, before trusting a CV
+pipeline stage. The pairwise numeric test and the sequential-pipeline test
+both looked "done" before this caught a real, user-visible defect.
+
 ## Note on the source video
 
 The test used the person's own uploaded broadcast footage. It is NOT

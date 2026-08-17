@@ -103,6 +103,21 @@ boundaries (cuts, close-ups), not registration bugs, once this fix is in.
 - Do NOT use their soccer .pt weights or their `BallTracker` (naive; fails on a
   disc — moot anyway now that disc detection is parked).
 
+**Field-calibration keypoint detection: MEASURED HARD, not automated yet**
+(see `results/calibration_finding.md`). Tried Hough line detection on the
+mosaic (89 "lines" found, nearly all stitching-seam artifacts, not field
+lines) and on a raw frame (80 found, dominated by the treeline horizon and
+broadcast overlay, not the sideline). Cones aren't clearly visible in any
+sampled frame either. Architecturally, calibrating once per segment and
+propagating via `mosaic.py`'s existing frame→mosaic homography chain (instead
+of recalibrating every frame) is still the right design — it's automated
+*detection* of the calibration points that's hard, not the propagation.
+**Recommendation: click calibration points manually, once per segment**
+(cheap — a segment can span minutes), same "accept a little manual input"
+call already made for identity in `CONTEXT.md`. Revisit automated detection
+(grass masking + orientation filtering + cone color detection) only if manual
+calibration becomes the actual bottleneck.
+
 ### B3. Train YOLO on ultimate footage
 
 **✅ Zero-training feasibility test DONE** (see `results/detection_finding.md`,

@@ -71,18 +71,29 @@ fixed elevated camera that pans/tilts/zooms hard, swinging between wide
 full-field shots and tight close-ups with no field context. Lined field, rich
 treeline/tent background.
 
-### B1. ✅ DONE — mosaic-registration feasibility CONFIRMED
-Measured with real ORB+RANSAC registration on 12 sampled frames (see
+### B1. ✅ DONE — mosaic-registration feasibility CONFIRMED, real pipeline built
+Measured with real ORB+RANSAC registration on real footage (see
 `results/mosaic_finding.md`): wide-to-wide frame pairs register solidly
 (74–84 RANSAC inliers at realistic 2–5s gaps, 16+ even 63 min apart) — this
 footage's background (treeline, tents) has enough texture. Tight close-up
-frames get 0 inliers, as expected — no shared background to match. **Required
-design constraint surfaced by the test:** the pipeline needs per-frame
-quality gating (skip/interpolate registration below an inlier threshold,
-~15–20) rather than forcing a homography through every frame, and must mask
-static broadcast overlay graphics (scoreboard, watermark) before feature
-detection. Next: build the actual mosaic + per-frame registration pipeline
-with that gating built in, not bolted on after.
+frames get 0 inliers, as expected — no shared background to match.
+
+Built the real pipeline, not just the feasibility test: `frisbee_analysis/mosaic.py`
+(`register_pair`, `register_sequence`, `interpolate_missing`) + `run_mosaic_test.py`.
+Running it end to end on real footage caught a real bug the pairwise test
+couldn't: `register_sequence` originally anchored every frame against frame 0,
+so when frame 0 was a broadcast intro card (not camera footage), EVERY later
+gameplay frame failed to match it — even though those frames matched each
+other perfectly. Fixed with a `segment_id` concept: when the stale anchor
+fails but a frame matches its immediate predecessor, start a new segment
+there rather than stalling. Effect on the same test window: 3/120 frames
+registered → 116/120, in 4 correctly-identified segments (intro card /
+transition / gameplay). `interpolate_missing` only bridges gaps within a
+segment now — bridging across a real cut would be meaningless.
+
+Still true and unchanged: mask static broadcast overlay graphics before
+feature detection, and expect segments/failures to correspond to real content
+boundaries (cuts, close-ups), not registration bugs, once this fix is in.
 
 ### B2. Reuse roboflow/sports (MIT) — lift, don't rewrite
 - `ViewTransformer` (homography) — use as-is with `ultimate_config.py` keypoints.

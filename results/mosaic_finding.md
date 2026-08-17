@@ -61,6 +61,32 @@ Also confirmed necessary: mask static broadcast overlay graphics (scoreboard,
 watermark, or any station bug) before feature detection on any footage that
 has them — they're free "matches" that say nothing about real camera motion.
 
+## Addendum: a real bug the pairwise test above couldn't catch
+
+Built the actual pipeline (`frisbee_analysis/mosaic.py`) and ran it end to end
+on real footage via `run_mosaic_test.py`, not just the isolated pairwise
+comparisons above. First run, on t=0–120s of the broadcast: only 3/120 frames
+registered. Investigating why (not assuming): frame 0 of that window is a
+**broadcast intro title card** ("Rogers Sports Exclusive" — a graphic, not
+camera footage at all), and `register_sequence`'s original design always
+anchored every later frame against frame 0. So every real gameplay frame in
+that window was being compared against an unrelated static graphic and
+correctly failed to match it — even though those gameplay frames matched
+*each other* just fine.
+
+Fixed with a `segment_id` concept: when a frame fails against the stale
+anchor but matches its immediate predecessor, start a new segment there
+instead of stalling forever. Result on the same window: **3/120 → 116/120**
+registered directly, correctly split into 4 segments (intro card / transition
+/ 91-frame continuous gameplay shot). `interpolate_missing` now only bridges
+gaps within a segment — bridging across a real cut would produce a
+meaningless homography.
+
+Lesson: the isolated pairwise test above answered "is registration possible
+at all" correctly, but only running the actual sequential pipeline on a
+sustained, real stretch of footage surfaced this failure mode. Keep testing
+the real code, not just the underlying primitive.
+
 ## Note on the source video
 
 The test used the person's own uploaded broadcast footage. It is NOT

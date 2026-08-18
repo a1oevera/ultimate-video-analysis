@@ -38,6 +38,11 @@ class Calibration:
     image_points: list  # pixel coords used, same order as keypoint_labels
     field_points: list  # cm coords used, same order
     image_path: str
+    source_frame_indices: list = None  # which raw frame (within the segment) each
+    # point was clicked on, same order as keypoint_labels -- lets you check whether
+    # error correlates with how many frames a point's homography was chained
+    # through from the segment reference (see results/calibration_finding.md).
+    # Optional/None for calibrations fit outside run_calibrate.py.
 
     def H(self) -> np.ndarray:
         return np.array(self.homography, dtype=np.float64)
@@ -53,7 +58,8 @@ class Calibration:
 
 
 def fit_calibration(image_points, keypoint_indices, image_path,
-                     cfg: UltimatePitchConfiguration = None) -> Calibration:
+                     cfg: UltimatePitchConfiguration = None,
+                     source_frame_indices=None) -> Calibration:
     """image_points: list of (x,y) pixel coords, one per entry in
     keypoint_indices (1-based indices into UltimatePitchConfiguration().vertices,
     matching CALIBRATION_INDICES' labelling). Points don't need to cover every
@@ -71,7 +77,8 @@ def fit_calibration(image_points, keypoint_indices, image_path,
     return Calibration(homography=H.tolist(), keypoint_labels=[str(i) for i in keypoint_indices],
                         image_points=[list(map(float, p)) for p in image_points],
                         field_points=[list(map(float, p)) for p in field_points],
-                        image_path=str(image_path))
+                        image_path=str(image_path),
+                        source_frame_indices=list(source_frame_indices) if source_frame_indices else None)
 
 
 def pixel_to_field(x, y, calib: Calibration):

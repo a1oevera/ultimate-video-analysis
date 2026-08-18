@@ -55,7 +55,7 @@ import sys
 import cv2
 import numpy as np
 from frisbee_analysis import UltimatePitchConfiguration, MosaicConfig, register_sequence
-from frisbee_analysis.calibration import fit_calibration, draw_field_overlay
+from frisbee_analysis.calibration import fit_calibration, draw_field_overlay, field_to_pixel
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/ojuc.mp4"
 start_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 1580.0
@@ -120,6 +120,7 @@ order = [3, 4, 5, 6, 7, 8, 1, 2, 9, 10]
 
 browse_pos = [0]    # index into seg_idx
 clicked = {}         # keypoint_index -> (x, y) in the SEGMENT's reference coords
+clicked_frame = {}   # keypoint_index -> raw frame index it was clicked on (diagnostic)
 current = [0]        # index into `order`
 
 
@@ -151,6 +152,7 @@ def on_mouse(event, x, y, flags, param):
         H = homography_by_idx[fi]
         pt = cv2.perspectiveTransform(np.array([[[float(x), float(y)]]]), H)
         clicked[order[current[0]]] = (float(pt[0, 0, 0]), float(pt[0, 0, 1]))
+        clicked_frame[order[current[0]]] = fi
         current[0] += 1
         redraw()
 
@@ -173,6 +175,7 @@ while True:
         if current[0] > 0:
             current[0] -= 1
             clicked.pop(order[current[0]], None)
+            clicked_frame.pop(order[current[0]], None)
             redraw()
     elif key == ord('q'):
         break
@@ -184,13 +187,43 @@ if len(clicked) < 4:
 
 indices = list(clicked.keys())
 points = [clicked[i] for i in indices]
-calib = fit_calibration(points, indices, f"{video_path} t={start_sec:.0f}-{start_sec + duration_sec:.0f}s", cfg)
+frame_indices = [clicked_frame[i] for i in indices]
+print(f"Points clicked on raw frame indices (within segment): {frame_indices}")
+print(f"  (spread: {max(frame_indices) - min(frame_indices)} frames apart -- "
+      f"wider spread means more homography-chaining drift risk, see results/calibration_finding.md)")
+calib = fit_calibration(points, indices, f"{video_path} t={start_sec:.0f}-{start_sec + duration_sec:.0f}s",
+                         cfg, source_frame_indices=frame_indices)
 calib.save(out_path)
 print(f"Saved calibration ({len(points)} points: {indices}) to {out_path}")
+
+# MEASURED: a calibration can look plausible in the overlay image while still
+# being numerically unreliable -- verify it, don't just eyeball it. Reprojection
+# error re-derives each point's pixel position from its known field coordinate
+# through the fitted homography and compares to where it was actually clicked;
+# large error means the points don't actually agree on one consistent
+# homography (bad click, bad frame registration, or points too close to
+# collinear to constrain the fit).
+print("\nReprojection error per point (self-fit residual -- want this small, a few px):")
+errs = []
+for label, img_pt, field_pt, fi in zip(calib.keypoint_labels, calib.image_points, calib.field_points, frame_indices):
+    proj_x, proj_y = field_to_pixel(field_pt[0], field_pt[1], calib)
+    err = ((proj_x - img_pt[0]) ** 2 + (proj_y - img_pt[1]) ** 2) ** 0.5
+    errs.append(err)
+    frames_from_ref = fi - seg_idx[0]
+    flag = "  <-- HIGH, this point may be bad" if err > 20 else ""
+    print(f"  keypoint {label}: error={err:.1f}px  (frame {frames_from_ref} from segment start){flag}")
+if max(errs) > 20:
+    print("\nWARNING: high reprojection error means this calibration is NOT reliable yet.")
+    print("Likely causes: points too close to collinear (need more spread, not just more")
+    print("points), or drift in frame registration for points clicked far from the")
+    print("segment's reference frame (try a shorter duration_sec, or click keypoints on")
+    print("frames earlier in the browsing order). Re-run and add/replace points.")
 
 # sanity-check overlay on the segment's own reference frame (identity homography)
 ref_frame = frames[seg_idx[0]]
 overlay = draw_field_overlay(ref_frame, calib, cfg)
 overlay_path = out_path.rsplit(".", 1)[0] + "_overlay.jpg"
 cv2.imwrite(overlay_path, overlay)
-print(f"Saved field-outline overlay (on the segment's reference frame) to {overlay_path}")
+print(f"\nSaved field-outline overlay (on the segment's reference frame) to {overlay_path}")
+print("Note: a plausible-looking overlay is NOT enough on its own -- check the")
+print("reprojection error above too (see results/calibration_finding.md).")

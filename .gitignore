@@ -4,7 +4,7 @@ __pycache__/
 venv/
 .venv/
 .claude/
-
+.env
 # Track B: downloaded pretrained weights, ultralytics run artifacts, video assets
 *.pt
 *.pth
@@ -13,3 +13,5 @@ runs/
 videos/*
 !videos/.gitkeep
 outputs/
+# Track B: downloaded Roboflow training datasets (large, re-downloadable)
+roboflow_datasets/

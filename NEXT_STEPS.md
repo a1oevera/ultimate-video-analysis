@@ -191,18 +191,34 @@ below before something end-to-end exists — fine-tuning still matters for
 production-quality recall/precision and anything beyond generic "person".
 
 - Pretrain person detection on pro footage, fine-tune on the person's own.
-- Seed annotation candidates found on Roboflow Universe (all CC-BY-4.0;
-  downloading any of them needs a free Roboflow account + API key, not yet
-  set up here):
+- Seed annotation candidates found on Roboflow Universe (all CC-BY-4.0),
+  API key now set up (`.env`, gitignored):
   - [Ultimate Player](https://universe.roboflow.com/ultimetrics/ultimate-player) —
-    1,626 images, player class, pretrained model available. Best fit for
-    #3/#4 (player-only, no disc/team clutter).
+    1,626 images, player class. **CORRECTED**: previously said "pretrained
+    model available" -- wrong, MEASURED via direct API query: `versions: 0`,
+    zero trained models exist, dataset only.
   - [Tracking](https://universe.roboflow.com/frisbee-tracker/tracking-w8biu) —
-    423 images, frisbee/observer/player classes.
+    423 images, frisbee/observer/player classes, 26 trained versions.
   - [Frisbee Tracking](https://universe.roboflow.com/tracking-f1jov/frisbee-tracking) —
-    521 images, disc/observer/player classes.
+    521 images, disc/observer/player classes, 3 trained versions.
   - (Disc-focused ones exist too — [Ultimate Frisbee Disc Detector](https://universe.roboflow.com/eelke-van-foeken-sfimp/ultimate-frisbee-disc-detector),
     509 images — not needed for #3/#4, keep in mind if disc detection is revisited.)
+
+  **✅ DONE, MEASURED: fine-tuned locally on "Tracking", no clear win over
+  generic COCO on the person's real footage** (see `results/finetune_finding.md`,
+  `run_download_roboflow_dataset.py` + `run_finetune_detector.py` +
+  `run_finetune_compare_test.py`). None of the three Universe projects offer
+  downloadable pretrained weights via the free API -- only hosted cloud
+  inference (footage-upload concern) or a dataset to train yourself.
+  Downloaded the dataset, fine-tuned `yolo11n` locally (25 epochs, CPU-only,
+  ~3 hours, nothing of the person's footage ever uploaded). Strong metrics
+  on Roboflow's own val split (player mAP50=0.957) did NOT transfer to a
+  visible improvement on the person's actual footage in a direct side-by-
+  side (comparable detection coverage, no fewer false positives, no better
+  recall on two spot-checked frames) -- real domain shift. Keeping generic
+  `yolo11n.pt` for player detection; the fine-tuned model's only unique value
+  is `frisbee`/`observer` classes (weak but nonzero) that COCO categorically
+  lacks, relevant only if disc detection comes back into scope.
 **✅ Multi-frame tracking DONE, confirms B4's plan is necessary, not
 optional** (see `results/tracking_finding.md`, `run_tracking_test.py`).
 YOLO + ByteTrack over two real 15s/120-frame windows: only 12% (tight,

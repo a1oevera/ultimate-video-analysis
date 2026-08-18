@@ -12,8 +12,10 @@ scipy>=1.10
 # (needs >=2.5), so SigLIP-based TeamClassifier (part of B2, already
 # deprioritized -- #3/#4 don't need team split) won't run here. YOLO
 # (ultralytics) doesn't depend on transformers, so B3 detection/tracking work
-# is fine on this box for wiring/testing; do real training runs elsewhere
-# (cloud GPU, or an Apple Silicon / NVIDIA machine with current torch).
+# is fine on this box for wiring/testing. CORRECTED (2026-08-18, see
+# results/finetune_finding.md): "do real training elsewhere" was about
+# training AT SCALE -- a genuinely small fine-tune (423 images, 3 classes,
+# 25 epochs) ran fine locally, just slowly (CPU-only, ~9 min/epoch, ~3 hrs).
 ultralytics          # YOLO
 supervision          # detection/tracking/annotation utilities (roboflow)
 umap-learn           # for TeamClassifier
@@ -21,3 +23,5 @@ transformers         # SigLIP embeddings for team classification (torch backend 
 torch                # backend; capped at 2.2.2 on Intel macOS
 opencv-python        # homography, mosaic registration
 git+https://github.com/roboflow/sports.git   # homography + team classifier to lift
+roboflow             # downloading Universe datasets for local fine-tuning (see results/finetune_finding.md)
+python-dotenv        # loads ROBOFLOW_API_KEY from .env (gitignored) without hardcoding it

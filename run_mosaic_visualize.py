@@ -17,15 +17,29 @@ start_sec = float(sys.argv[3]) if len(sys.argv) > 3 else 270.0
 duration_sec = float(sys.argv[4]) if len(sys.argv) > 4 else 300.0
 sample_fps = float(sys.argv[5]) if len(sys.argv) > 5 else 0.2
 
-# Full-width top band, not just the small corner boxes: a second, larger
-# semi-transparent "ROGERS tv" watermark shows up intermittently (not in
-# every frame) higher up and wider than the crisp corner logo -- a small box
-# missed it. y=190 stays above the treeline in this footage's wide shots.
-OVERLAY_BOXES = [(0, 0, 1920, 230), (0, 860, 1920, 950)]  # top band (scoreboard + both watermark variants), captions band
-
 cap = cv2.VideoCapture(video_path)
 if not cap.isOpened():
     sys.exit(f"could not open {video_path}")
+
+# Static broadcast overlay position depends on the source video -- MEASURED BUG
+# (see results/calibration_finding.md): a hardcoded-for-one-video overlay box
+# silently does the wrong thing (or nothing) against a different video's
+# resolution, and can corrupt registration by leaving a real overlay unmasked.
+# Full-width top band for ojuc.mp4: a second, larger semi-transparent
+# "ROGERS tv" watermark shows up intermittently higher up and wider than the
+# crisp corner logo -- a small box missed it. y=230 stays above the treeline
+# in that footage's wide shots.
+_frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+_frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+if (_frame_w, _frame_h) == (1920, 1080):
+    OVERLAY_BOXES = [(0, 0, 1920, 230), (0, 860, 1920, 950)]  # ojuc.mp4: top band, captions band
+elif (_frame_w, _frame_h) == (640, 360):
+    OVERLAY_BOXES = [(0, 295, 640, 360)]  # videoplayback.mp4: UFA score bug + ticker, bottom band
+else:
+    OVERLAY_BOXES = []
+    print(f"WARNING: no known overlay mask for {_frame_w}x{_frame_h} -- add one if this "
+          f"video has a static broadcast graphic, or registration may be corrupted by it.")
+
 video_fps = cap.get(cv2.CAP_PROP_FPS)
 step = int(round(video_fps / sample_fps))
 start_frame = int(round(start_sec * video_fps))

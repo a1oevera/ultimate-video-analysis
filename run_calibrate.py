@@ -48,7 +48,11 @@ Controls:
   q           finish once you have enough points (need >= 4, more is better,
               spread across the field rather than clustered)
 
-Run:  python run_calibrate.py <video_path> [start_sec] [duration_sec] [sample_fps] [out.json]
+Run:  python run_calibrate.py <video_path> [start_sec] [duration_sec] [sample_fps] [out.json] [segment_id]
+Prints every segment found in the window (id, frame count, time range)
+before opening the GUI. Omit segment_id to use the largest one (default);
+pass a specific id from that printout to browse a different one -- e.g. if
+what you want to click is in a smaller segment next to a bigger one.
 Needs opencv-python (Track B deps, see requirements.txt).
 """
 import sys
@@ -63,13 +67,28 @@ duration_sec = float(sys.argv[3]) if len(sys.argv) > 3 else 180.0
 sample_fps = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0
 out_path = sys.argv[5] if len(sys.argv) > 5 else "outputs/calibration.json"
 
-# This broadcast's static overlay (scoreboard/watermark top band, captions
-# bottom band) -- same as run_mosaic_test.py. Adjust or clear for other footage.
-OVERLAY_BOXES = [(0, 0, 1920, 230), (0, 860, 1920, 950)]
-
 cap = cv2.VideoCapture(video_path)
 if not cap.isOpened():
     sys.exit(f"could not open {video_path}")
+
+# Static broadcast overlay position depends on the source video -- MEASURED BUG
+# (see results/calibration_finding.md): this used to be hardcoded for the
+# 1920x1080 "ojuc.mp4" video's overlay position regardless of which video was
+# actually loaded. Against the 640x360 UFA video that masked the top 64% of
+# every frame (real field content, wasted) while completely missing the
+# actual score bug at the bottom (never masked, corrupting registration --
+# most likely cause of the segment-selection weirdness this was chasing).
+_frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+_frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+if (_frame_w, _frame_h) == (1920, 1080):
+    OVERLAY_BOXES = [(0, 0, 1920, 230), (0, 860, 1920, 950)]  # ojuc.mp4: top scoreboard band, captions band
+elif (_frame_w, _frame_h) == (640, 360):
+    OVERLAY_BOXES = [(0, 295, 640, 360)]  # videoplayback.mp4: UFA score bug + ticker, bottom band
+else:
+    OVERLAY_BOXES = []
+    print(f"WARNING: no known overlay mask for {_frame_w}x{_frame_h} -- add one to run_calibrate.py "
+          f"if this video has a static broadcast graphic, or registration may be corrupted by it.")
+
 video_fps = cap.get(cv2.CAP_PROP_FPS)
 step = max(1, int(round(video_fps / sample_fps)))
 start_frame = int(round(start_sec * video_fps))
@@ -99,16 +118,39 @@ mosaic_cfg = MosaicConfig(overlay_mask_boxes=tuple(OVERLAY_BOXES))
 regs = register_sequence(frames, mosaic_cfg)
 homography_by_idx = {r.frame_idx: r.homography for r in regs if r.ok}
 
-segment_sizes = {}
+segment_frame_idx = {}
 for r in regs:
     if r.ok:
-        segment_sizes[r.segment_id] = segment_sizes.get(r.segment_id, 0) + 1
-if not segment_sizes:
+        segment_frame_idx.setdefault(r.segment_id, []).append(r.frame_idx)
+if not segment_frame_idx:
     sys.exit("no frames registered at all -- try a different window (start_sec/duration_sec)")
-best_seg = max(segment_sizes, key=segment_sizes.get)
-seg_idx = [r.frame_idx for r in regs if r.ok and r.segment_id == best_seg]
+
+# MEASURED (results/calibration_finding.md): always auto-picking the LARGEST
+# segment silently excludes a smaller segment even when it's the one
+# containing what you actually want to click -- confirmed against real
+# footage where a genuine registration failure at one frame (camera
+# motion/blur, not a bug) split a 2-frame segment containing the target
+# moment from a 9-frame segment right after it, and the tool kept forcing
+# the 9-frame one. Print every segment so this is visible and choosable
+# instead of silently deciding for you.
+print("\nSegments found in this window:")
+for sid, idxs in sorted(segment_frame_idx.items()):
+    t0, t1 = frame_abs_sec[idxs[0]], frame_abs_sec[idxs[-1]]
+    print(f"  segment {sid}: {len(idxs)} frames, t={int(t0//60)}:{t0%60:05.2f} - {int(t1//60)}:{t1%60:05.2f}")
+
+segment_choice = sys.argv[6] if len(sys.argv) > 6 else None
+if segment_choice is not None:
+    seg_id = int(segment_choice)
+    if seg_id not in segment_frame_idx:
+        sys.exit(f"segment {seg_id} not found -- pick one of {sorted(segment_frame_idx.keys())}")
+    best_seg = seg_id
+else:
+    best_seg = max(segment_frame_idx, key=lambda s: len(segment_frame_idx[s]))
+    print(f"(defaulting to the largest -- pass a segment id as a 6th argument to pick a different one)")
+seg_idx = segment_frame_idx[best_seg]
+t0, t1 = frame_abs_sec[seg_idx[0]], frame_abs_sec[seg_idx[-1]]
 print(f"Using segment {best_seg}: {len(seg_idx)} frames to browse "
-      f"(t={start_sec + seg_idx[0] / sample_fps:.0f}s - {start_sec + seg_idx[-1] / sample_fps:.0f}s)")
+      f"(t={int(t0//60)}:{t0%60:05.2f} - {int(t1//60)}:{t1%60:05.2f})")
 
 cfg = UltimatePitchConfiguration()
 KEYPOINT_LABELS = {

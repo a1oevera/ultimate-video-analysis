@@ -81,6 +81,54 @@ def register_pair(frame_a: np.ndarray, frame_b: np.ndarray, cfg: MosaicConfig = 
     return H, n_inliers
 
 
+def register_pair_with_coverage(frame_a: np.ndarray, frame_b: np.ndarray, cfg: MosaicConfig = MosaicConfig()):
+    """Like register_pair, but also returns what fraction of frame_b's area
+    is spanned by the convex hull of its INLIER keypoints.
+
+    MEASURED (person caught it by eye, see results/calibration_finding.md):
+    a calibration bank auto-match had visible drift on part of the frame far
+    from where the matched keypoints actually were, despite a healthy inlier
+    COUNT (1900+). Root cause: RANSAC's threshold only bounds error AT the
+    matched points themselves -- it says nothing about how well-spread those
+    points are. A homography fit from points clustered in one corner (e.g.
+    background scenery) can be locally excellent there and still drift
+    significantly when extrapolated to project a field line on the other
+    side of the frame, where no matched point was anywhere near. Coverage
+    (how much of the frame area the inlier points actually span) is a cheap
+    proxy for "how far is this extrapolating" that a bare inlier count can't
+    tell you."""
+    gray_a, gray_b = _to_gray(frame_a), _to_gray(frame_b)
+    mask = _build_mask(gray_a.shape, cfg.overlay_mask_boxes)
+
+    orb = cv2.ORB_create(nfeatures=cfg.n_features)
+    kp_a, des_a = orb.detectAndCompute(gray_a, mask)
+    kp_b, des_b = orb.detectAndCompute(gray_b, mask)
+    if des_a is None or des_b is None or len(kp_a) < 4 or len(kp_b) < 4:
+        return None, 0, 0.0
+
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+    matches = bf.knnMatch(des_b, des_a, k=2)
+    good = [m for m, n in matches if n and m.distance < cfg.ratio_test * n.distance]
+    if len(good) < 4:
+        return None, 0, 0.0
+
+    src = np.float32([kp_b[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+    dst = np.float32([kp_a[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+    H, inlier_mask = cv2.findHomography(src, dst, cv2.RANSAC, cfg.ransac_thresh_px)
+    if H is None or inlier_mask is None:
+        return None, 0, 0.0
+    n_inliers = int(inlier_mask.sum())
+
+    inlier_pts = src[inlier_mask.ravel().astype(bool)].reshape(-1, 2)
+    frame_area = frame_b.shape[0] * frame_b.shape[1]
+    if len(inlier_pts) >= 3 and frame_area > 0:
+        hull_area = cv2.contourArea(cv2.convexHull(inlier_pts.astype(np.float32)))
+        coverage = float(hull_area / frame_area)
+    else:
+        coverage = 0.0
+    return H, n_inliers, coverage
+
+
 def register_sequence(frames: list[np.ndarray], cfg: MosaicConfig = MosaicConfig()) -> list[FrameRegistration]:
     """Register each frame against the most recently successfully-registered
     frame (NOT simply the previous raw frame -- if that one failed, it isn't

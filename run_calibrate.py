@@ -306,6 +306,16 @@ if all_errs and max(all_errs) > 20:
     print("clicked far from the segment's reference frame (try a shorter duration_sec, or click")
     print("on frames earlier in the browsing order). Re-run and add/replace lines.")
 
+# MEASURED GAP (see Calibration.source_max_reprojection_px's docstring): a
+# calibration can pass the 20px reject threshold while still having enough
+# error (e.g. 12.8px) to be visibly noticeable on an overlay far from the
+# clicked points -- and that becomes UNCHECKABLE once this calibration gets
+# composed into a bank auto-match (no line_details survive composition).
+# Stamp the worst-line error onto the calibration itself so it stays visible
+# downstream instead of silently disappearing.
+calib.source_max_reprojection_px = max(all_errs) if all_errs else None
+calib.save(out_path)  # re-save: the first save() above predates this field being set
+
 # sanity-check overlay on the segment's own REFERENCE frame -- the frame whose
 # own homography is identity, i.e. its raw pixels ARE the segment's shared
 # reference coordinate system that calib.H() operates in (NOT necessarily

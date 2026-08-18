@@ -51,6 +51,16 @@ class Calibration:
     # only possible live during run_calibrate.py's session, not after the
     # fact from the saved file -- learned that gap the hard way, keeping the
     # full data now so it's always re-checkable. None for point-only fits.
+    source_max_reprojection_px: float = None  # MEASURED GAP (person caught a
+    # visible sideline drift in an auto-matched calibration; traced it back
+    # to the ORIGINAL manual calibration's own reprojection error -- 12.8px
+    # on one line -- which was below the "reject" threshold but still
+    # visible, and became UNCHECKABLE once composed into a bank match
+    # because auto-matched calibrations have no line_details of their own to
+    # re-verify). This field carries the original calibration's own
+    # worst-line error FORWARD through every bank composition (see
+    # calibration_bank.py), so that limitation stays visible instead of
+    # silently disappearing. None if never checked (e.g. a point-only fit).
 
     def H(self) -> np.ndarray:
         return np.array(self.homography, dtype=np.float64)

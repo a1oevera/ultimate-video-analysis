@@ -40,7 +40,7 @@ from __future__ import annotations
 import os
 import cv2
 import numpy as np
-from .mosaic import MosaicConfig, register_pair
+from .mosaic import MosaicConfig, register_pair, register_pair_with_coverage
 from .calibration import Calibration
 
 
@@ -89,16 +89,29 @@ def _save_canvas(canvas_dir, image, mask, calib):
         os.remove(legacy_path)
 
 
-def try_auto_calibrate(new_ref_frame: np.ndarray, bank_dir: str,
-                        mosaic_cfg: MosaicConfig = None) -> tuple[Calibration | None, str | None, int]:
+def try_auto_calibrate(new_ref_frame: np.ndarray, bank_dir: str, mosaic_cfg: MosaicConfig = None):
     """Try to match new_ref_frame against every canvas's CURRENT accumulated
     image in the bank (not a single fixed frame -- the composite grows every
     time add_entry merges a new shot into it). Returns (calibration,
-    matched_canvas_name, n_inliers) for the best match clearing min_inliers,
-    or (None, None, 0) if nothing matched -- caller should fall back to
-    manual calibration in that case."""
+    matched_canvas_name, n_inliers, coverage) for the best match clearing
+    min_inliers, or (None, None, 0, 0.0) if nothing matched -- caller should
+    fall back to manual calibration in that case.
+
+    `coverage` (0-1): fraction of new_ref_frame's area spanned by this
+    match's inlier keypoints -- see mosaic.py's register_pair_with_coverage
+    docstring for why this matters (a healthy inlier COUNT doesn't rule out
+    the points being clustered in one small region, which risks drift when
+    the fitted homography is extrapolated to project something far from
+    that cluster). MEASURED CAVEAT: tested directly against a real case
+    where a person spotted visible overlay drift -- that specific case had
+    GOOD coverage (55.6%) and was NOT explained by this check (the drift
+    traced back to the underlying calibration's own reprojection error
+    instead, see Calibration.source_max_reprojection_px). Coverage is still
+    a real, legitimate signal for a genuinely different failure mode (a
+    poorly-distributed bank match) -- just don't expect it alone to catch
+    every source of drift."""
     mosaic_cfg = mosaic_cfg or MosaicConfig()
-    best = (None, None, 0)
+    best = (None, None, 0, 0.0)
     for canvas_dir in _canvas_dirs(bank_dir):
         loaded = _load_canvas(canvas_dir)
         if loaded is None:
@@ -106,15 +119,16 @@ def try_auto_calibrate(new_ref_frame: np.ndarray, bank_dir: str,
         canvas_image, _, canvas_calib = loaded
         # H_step maps new_ref_frame's pixels -> canvas's coords (register_pair's
         # convention: homography maps the SECOND arg's coords -> the FIRST arg's)
-        H_step, n_inliers = register_pair(canvas_image, new_ref_frame, mosaic_cfg)
+        H_step, n_inliers, coverage = register_pair_with_coverage(canvas_image, new_ref_frame, mosaic_cfg)
         if H_step is None or n_inliers < mosaic_cfg.min_inliers or n_inliers <= best[2]:
             continue
         new_H = canvas_calib.H() @ H_step
         new_calib = Calibration(homography=new_H.tolist(), keypoint_labels=canvas_calib.keypoint_labels,
                                  image_points=[], field_points=[],
                                  image_path=f"auto-matched via bank canvas {os.path.basename(canvas_dir)}",
-                                 source_frame_indices=None, line_details=None)
-        best = (new_calib, os.path.basename(canvas_dir), n_inliers)
+                                 source_frame_indices=None, line_details=None,
+                                 source_max_reprojection_px=canvas_calib.source_max_reprojection_px)
+        best = (new_calib, os.path.basename(canvas_dir), n_inliers, coverage)
     return best
 
 
@@ -162,7 +176,8 @@ def _grow_and_composite(canvas_image, canvas_mask, canvas_calib: Calibration,
     new_calib_H = canvas_calib.H() @ np.linalg.inv(T)
     new_calib = Calibration(homography=new_calib_H.tolist(), keypoint_labels=canvas_calib.keypoint_labels,
                              image_points=[], field_points=[], image_path=canvas_calib.image_path,
-                             source_frame_indices=None, line_details=None)
+                             source_frame_indices=None, line_details=None,
+                             source_max_reprojection_px=canvas_calib.source_max_reprojection_px)
     return grown_image, grown_mask, new_calib
 
 

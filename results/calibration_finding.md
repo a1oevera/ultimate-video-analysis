@@ -198,6 +198,46 @@ of a fixed color range). Not pursued further for now; the calibration bank
 the higher-value next investment instead, since it doesn't depend on cone
 visibility at all.
 
+## Addendum 4.5: a "not 100% accurate" line in an auto-matched overlay -- traced, not guessed
+
+Person spotted the far-sideline overlay drifting slightly in an auto-matched
+calibration and asked what the red dot was too (answer: one of the 12
+known field reference vertices `draw_field_overlay` marks -- only one was
+visible in that crop, the rest projected outside the frame).
+
+First hypothesis for the drift: the bank-match step's inlier keypoints were
+clustered in one region of the frame (low "coverage"), so the fitted
+homography was extrapolating badly to the far side of the frame where the
+sideline actually is. Built `register_pair_with_coverage` (mosaic.py) to
+test this directly rather than assume it -- **disproven**: the actual match
+had 1,902+ inliers AND 55.6% frame coverage, both healthy. Not the
+explanation.
+
+Traced it properly instead: re-ran `check_line_reprojection_error` on the
+ORIGINAL manual calibration (before any bank-matching at all) and found it
+already had up to **12.8px error on one line** (the near goal line), with
+5.9px on the far sideline itself -- a real, pre-existing imprecision from
+the original click session. It was below the 20px "reject, don't add to
+bank" threshold, so it passed silently -- and once composed into an
+auto-matched calibration (which carries no `line_details` of its own),
+that imprecision became invisible: nothing would tell you it was there
+short of eyeballing the overlay, which is exactly what caught it.
+
+**Fix**: added `Calibration.source_max_reprojection_px`, stamped by
+`run_calibrate.py` right after computing reprojection error, and carried
+forward through every bank composition (`_grow_and_composite`,
+`try_auto_calibrate`) so it's never lost. `run_calibrate_auto.py` now prints
+it explicitly on every auto-match, e.g. "the calibration this canvas was
+built from had up to 12.8px reprojection error of its own." The
+coverage check (real, if not the explanation here) is also wired in and
+printed, with a warning below 15%.
+
+**Honest framing**: this doesn't make the underlying calibration more
+accurate -- it makes its actual accuracy visible instead of silently
+disappearing at composition time. The right response to a high
+`source_max_reprojection_px` is still to redo that line in `run_calibrate.py`,
+same as it always was.
+
 ## Addendum 5: the calibration bank -- reuse instead of re-detect
 
 Prompted by the person's own observation: this footage cuts/pans often

@@ -93,7 +93,7 @@ seg_idx = sorted(segment_frame_idx[seg_id])
 anchor_fi = next((fi for fi in seg_idx if np.allclose(homography_by_idx[fi], np.eye(3))), seg_idx[0])
 ref_frame = frames[anchor_fi]
 
-calib, matched_name, n_inliers = try_auto_calibrate(ref_frame, bank_dir, mosaic_cfg)
+calib, matched_name, n_inliers, coverage = try_auto_calibrate(ref_frame, bank_dir, mosaic_cfg)
 
 if calib is None:
     print(f"\nNo match found in the calibration bank ({bank_dir}) -- this camera framing "
@@ -105,8 +105,24 @@ if calib is None:
           f"it won't need manual clicks again.")
     sys.exit(0)
 
-print(f"\nMatched bank entry '{matched_name}' with {n_inliers} RANSAC inliers -- "
-      f"calibration composed automatically, NO manual clicking needed.")
+print(f"\nMatched bank entry '{matched_name}' with {n_inliers} RANSAC inliers, "
+      f"{coverage*100:.0f}% frame coverage -- calibration composed automatically, "
+      f"NO manual clicking needed.")
+if coverage < 0.15:
+    print(f"  NOTE: low coverage ({coverage*100:.0f}%) -- the matched keypoints were clustered "
+          f"in a small part of the frame, which risks drift when the fit is extrapolated to "
+          f"project something far from that cluster (e.g. a sideline). Check the overlay extra "
+          f"carefully.")
+# MEASURED (person caught visible drift in an auto-matched overlay -- see
+# calibration_bank.py's try_auto_calibrate docstring): the underlying manual
+# calibration this bank canvas was built from can itself have real
+# reprojection error that a healthy inlier count/coverage won't reveal,
+# since it isn't introduced by THIS match step at all. Surface it instead of
+# letting it disappear once composed.
+if calib.source_max_reprojection_px is not None:
+    print(f"  NOTE: the calibration this canvas was built from had up to "
+          f"{calib.source_max_reprojection_px:.1f}px reprojection error of its own -- "
+          f"that carries through to this auto-match too, on top of anything from this match step.")
 calib.save(out_path)
 print(f"Saved calibration to {out_path}")
 

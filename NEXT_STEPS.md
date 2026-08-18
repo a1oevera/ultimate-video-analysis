@@ -233,9 +233,29 @@ scope; not active work right now.
   assignment).
 
 ### B5. Emit Track-schema rows from the CV pipeline
-The whole point of `schema.py`: the CV pipeline's job is to output the SAME
-`Track` object the loader produces. Then Track A's possession code runs
-unchanged on real footage.
+
+**✅ First end-to-end pass DONE, plumbing confirmed, numbers not yet
+trustworthy** (see `results/metrics_finding.md`, `run_metrics_test.py`).
+Wires everything built so far together for real: registration
+(`mosaic.py`) → calibration (`calibration.py`) → YOLO detection + ByteTrack
+→ team classification (saturation split) → `is_in_field` filter → team-level
+on-field counts + instantaneous speed (m/s), using consecutive-*sampled*-
+frame track matches only (sidesteps the ~90% fragmentation from
+`results/tracking_finding.md` rather than solving it — no full-lifespan
+identity needed for instantaneous speed). Visual check: `is_in_field`
+correctly dropped two people standing on the running track outside the
+sideline. Numbers themselves (team A/B mean speed ~1.3–1.5 m/s) are **not
+trustworthy yet** — only 8 speed samples from one 12s window, and the
+calibration in use predates `line_details` so its own reprojection error
+is unverified.
+
+Next: re-run `run_calibrate.py` (current version, saves `line_details`) and
+check reprojection error before trusting anything downstream; then re-run
+`run_metrics_test.py` over a longer/wider window (ideally spanning most of a
+point) for a real sample size. Full `Track`-schema emission (positions over
+a whole point, not just per-frame counts/instant speed) is still open —
+`run_metrics_test.py` is a metrics-shaped proof of concept, not yet that
+object.
 
 ---
 

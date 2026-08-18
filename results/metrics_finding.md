@@ -79,6 +79,24 @@ were barely affected (still ~1.3–1.5 m/s, still only 8 usable samples) since
 that estimate was never reading the undercounted path — the bug was specific
 to counting/classification, not speed.
 
+## Addendum 2: fixing the ByteTrack drop un-hid a real false positive (cone), also fixed
+
+The person spotted a cone/field-marker getting boxed as a player in the
+sample image right after the ByteTrack fix above. Traced it: a 7x13px box at
+conf=0.34 — squarely in the `[0.25, 0.35)` band ByteTrack used to silently
+eat — in a frame where every real player's box was >=32px tall. The
+ByteTrack-drop fix had an unintended side effect: it stopped hiding this
+false positive along with the real detections it was wrongly hiding.
+
+Fix: drop any detection under 40% of the frame's own median detection height
+(only applied when there are >=3 detections, so the median itself is
+meaningful). Verified on the same frame: the cone box disappears, all 11 real
+player boxes remain (team B's mean count moved 4.5→4.2, the cone had been
+counted as one low-saturation-adjacent "player"). This is a per-frame
+heuristic, not a learned classifier — it assumes real players at any depth on
+this footage stay roughly proportionate to each other in the same frame,
+which held here but isn't guaranteed on a much wider zoom range.
+
 ## Recommendation
 
 - Re-run calibration with the current `run_calibrate.py` (saves

@@ -66,6 +66,7 @@ import numpy as np
 from frisbee_analysis import UltimatePitchConfiguration, MosaicConfig, register_sequence
 from frisbee_analysis.calibration import (fit_calibration_with_lines, draw_field_overlay,
                                           field_to_pixel, check_line_reprojection_error)
+from frisbee_analysis.calibration_bank import add_entry as add_bank_entry
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/ojuc.mp4"
 start_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 1580.0
@@ -305,11 +306,33 @@ if all_errs and max(all_errs) > 20:
     print("clicked far from the segment's reference frame (try a shorter duration_sec, or click")
     print("on frames earlier in the browsing order). Re-run and add/replace lines.")
 
-# sanity-check overlay on the segment's own reference frame (identity homography)
-ref_frame = frames[seg_idx[0]]
+# sanity-check overlay on the segment's own REFERENCE frame -- the frame whose
+# own homography is identity, i.e. its raw pixels ARE the segment's shared
+# reference coordinate system that calib.H() operates in (NOT necessarily
+# seg_idx[0] -- _reclaim_failed_frames in mosaic.py can fold an earlier-index
+# frame into a segment whose anchor came later, so find the true identity
+# frame rather than assuming the first index is it).
+anchor_fi = next((fi for fi in seg_idx if np.allclose(homography_by_idx[fi], np.eye(3))), seg_idx[0])
+ref_frame = frames[anchor_fi]
 overlay = draw_field_overlay(ref_frame, calib, cfg)
 overlay_path = out_path.rsplit(".", 1)[0] + "_overlay.jpg"
 cv2.imwrite(overlay_path, overlay)
 print(f"\nSaved field-outline overlay (on the segment's reference frame) to {overlay_path}")
 print("Note: a plausible-looking overlay is NOT enough on its own -- check the")
 print("reprojection error above too (see results/calibration_finding.md).")
+
+# Add to the calibration bank so future segments with a similar camera
+# framing can auto-match against this one instead of needing manual clicks
+# again (see frisbee_analysis/calibration_bank.py). Skip if the reprojection
+# error was flagged HIGH above -- don't propagate a bad calibration to future
+# auto-matches just because it was already computed.
+bank_dir = "outputs/calibration_bank"
+if all_errs and max(all_errs) > 20:
+    print(f"\nNOT added to the calibration bank ({bank_dir}) -- reprojection error was HIGH, "
+          f"see the warning above. Fix the calibration first, or add it manually later via "
+          f"frisbee_analysis.calibration_bank.add_entry once you trust it.")
+else:
+    entry_dir = add_bank_entry(bank_dir, ref_frame, calib)
+    print(f"\nAdded to the calibration bank: {entry_dir}")
+    print(f"Future segments with a similar camera framing can auto-match against this via "
+          f"run_calibrate_auto.py, skipping manual clicking entirely.")

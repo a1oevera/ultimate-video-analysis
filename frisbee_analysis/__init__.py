@@ -17,5 +17,6 @@ try:
     from .calibration import (Calibration, fit_calibration, fit_calibration_with_lines,
                               pixel_to_field, field_to_pixel, is_in_field, draw_field_overlay,
                               check_line_reprojection_error)
+    from .calibration_bank import try_auto_calibrate, add_entry as add_bank_entry
 except ImportError:
     pass

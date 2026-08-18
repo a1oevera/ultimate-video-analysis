@@ -168,6 +168,20 @@ this environment doesn't have. Run: `python run_calibrate.py videos/ojuc.mp4
 1580 180 1.0`. Next: run it for real, then wire `is_in_field` into the B3
 detections to filter out sideline/bench people.
 
+**✅ DONE: calibration bank -- auto-reuse a calibrated camera framing instead
+of re-clicking every segment** (see `results/calibration_finding.md`
+Addendum 5, `frisbee_analysis/calibration_bank.py`, `run_calibrate_auto.py`).
+Motivated by the person's own observation that one manual session per camera
+segment doesn't scale to a full game with many cuts. Reuses `mosaic.py`'s
+ORB+RANSAC registration between segments' reference frames instead of just
+within one; `run_calibrate.py` now auto-adds every calibration it produces to
+the bank. Verified: re-matching the same framing composed a correct
+calibration with zero clicking (2,533 inliers); an unrelated window correctly
+found no match and fell back to the manual flow instead of forcing a bad
+one. Also tested (and rejected) a cheaper alternative first: plain HSV
+color-filtering for cones had too many false positives (crowd skin tone
+especially) to trust -- see Addendum 4 in the same doc.
+
 **Known constraint (from the person, not yet re-verified against this
 footage): brick marks aren't painted on most fields**, especially
 recreational/coned ones — same unreliability class as the near-back corners.

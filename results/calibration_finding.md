@@ -197,3 +197,39 @@ of a fixed color range). Not pursued further for now; the calibration bank
 (auto-reusing already-calibrated camera framings, see `NEXT_STEPS.md`) is
 the higher-value next investment instead, since it doesn't depend on cone
 visibility at all.
+
+## Addendum 5: the calibration bank -- reuse instead of re-detect
+
+Prompted by the person's own observation: this footage cuts/pans often
+enough that ONE manual `run_calibrate.py` session per camera segment doesn't
+scale to a full game (could be dozens of segments). Since it's a fixed
+mount (pure rotation/zoom only), the broadcast almost certainly reuses a
+small set of recurring framings (the standard wide shot, close-ups per
+endzone) far more than it invents brand new ones each cut -- worth checking
+"have I already calibrated a shot like this?" before asking for more clicks.
+
+Built `frisbee_analysis/calibration_bank.py` + `run_calibrate_auto.py`:
+reuses the SAME ORB+RANSAC registration already validated for within-segment
+frame chaining (`mosaic.py`'s `register_pair`), just applied BETWEEN a new
+segment's reference frame and every already-calibrated bank entry's
+reference frame. A match composes the calibration for free
+(`new_calib.H = bank_entry.H() @ H_step`) -- no clicking. `run_calibrate.py`
+now auto-adds every successful manual calibration to the bank too, so the
+bank grows automatically as a byproduct of normal use, no extra step.
+
+Verified end-to-end on real footage: seeded the bank with the existing
+calibration (found its true anchor frame -- see the code comment on why
+that's not always `seg_idx[0]`, `_reclaim_failed_frames` in `mosaic.py` can
+fold an earlier-index frame into a later segment's anchor). Re-running on
+the SAME window matched with 2,533 RANSAC inliers and produced a correct
+overlay (visually identical quality to the manual one). Running on a
+DIFFERENT, unrelated window (t=300s vs. the seed's t=1158s) correctly found
+no match and fell back with clear instructions, rather than forcing a bad
+match.
+
+Caveat carried over from the wrong-field warning above: an automatic match
+is still just a homography composition from a RANSAC inlier count -- a
+coincidental match is possible in principle (two genuinely different
+framings that happen to share enough background texture). `run_calibrate_auto.py`
+saves the same sanity-check overlay image any calibration does; check it by
+eye before trusting an auto-match, same as a manual one.

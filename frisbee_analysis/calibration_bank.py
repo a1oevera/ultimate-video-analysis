@@ -204,6 +204,36 @@ def add_entry(bank_dir: str, ref_frame: np.ndarray, calib: Calibration,
 
     if best_dir is not None:
         canvas_image, canvas_mask, canvas_calib = _load_canvas(best_dir)
+
+        # MEASURED BUG (person redid a manual calibration specifically to
+        # fix a bad line, but the bank kept serving the OLD, worse one
+        # afterward): merging into an existing canvas always kept THAT
+        # canvas's calibration as authoritative, regardless of which one --
+        # old canvas or new incoming frame -- was actually more accurate.
+        # Prefer whichever has the LOWER known source_max_reprojection_px;
+        # only keep the existing canvas's when the incoming one has no known
+        # error to compare against (don't downgrade a verified canvas for
+        # an unverified one).
+        incoming_better = (
+            calib.source_max_reprojection_px is not None and
+            (canvas_calib.source_max_reprojection_px is None or
+             calib.source_max_reprojection_px < canvas_calib.source_max_reprojection_px)
+        )
+        if incoming_better:
+            # re-base the canvas on the NEW (better) calibration: warp the
+            # OLD canvas's accumulated content INTO ref_frame's coordinate
+            # system instead -- symmetric to the normal path below, just
+            # with the roles of "base" and "merged in" swapped.
+            H_reverse, n_inliers_reverse = register_pair(ref_frame, canvas_image, mosaic_cfg)
+            if H_reverse is not None and n_inliers_reverse >= mosaic_cfg.min_inliers:
+                base_mask = np.full(ref_frame.shape[:2], 255, dtype=np.uint8)
+                grown_image, grown_mask, grown_calib = _grow_and_composite(
+                    ref_frame, base_mask, calib, canvas_image, H_reverse)
+                _save_canvas(best_dir, grown_image, grown_mask, grown_calib)
+                return best_dir
+            # reverse registration failed for some reason -- fall through to
+            # the normal path rather than losing this frame's contribution
+
         grown_image, grown_mask, grown_calib = _grow_and_composite(
             canvas_image, canvas_mask, canvas_calib, ref_frame, best_H)
         _save_canvas(best_dir, grown_image, grown_mask, grown_calib)

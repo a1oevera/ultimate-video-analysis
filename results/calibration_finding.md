@@ -238,6 +238,39 @@ disappearing at composition time. The right response to a high
 `source_max_reprojection_px` is still to redo that line in `run_calibrate.py`,
 same as it always was.
 
+## Addendum 4.6: redo attempt 1 made it WORSE, and the bank had a real bug hiding a fix
+
+Person redid the near goal line following advice to click more points
+spread apart -- result was worse across nearly every line, not just the one
+being fixed (max reprojection error 12.8px -> 29.0px). Root cause traced,
+not guessed: the far sideline's points came from 4 different frames spread
+1465px apart in the shared coordinate system -- exactly the "homography-
+chaining drift risk" `run_calibrate.py` already warns about when clicks
+spread across frames, which the earlier advice to "spread points apart"
+didn't account for (spreading pixel-wise within one frame is good;
+spreading across multiple frames trades that for chaining risk). The near
+goal line got worse too despite being single-frame -- likely plain click
+imprecision on a foreshortened/partially-blocked view of that line.
+
+**Redo attempt 2** (one frame per line, points spread within that frame
+only): every single line improved versus BOTH previous attempts. Max error
+dropped to 6.5px (near goal line specifically: 12.8px -> 2.9px). Visually
+confirmed: the same corner that landed on a player before now lands right
+next to an actual visible cone.
+
+**Real bug found while verifying this got saved into the bank**: it didn't.
+`add_entry`'s merge path always kept the EXISTING canvas's calibration as
+authoritative when merging a matching new frame in, regardless of which one
+-- old canvas or new frame -- was actually more accurate. The improved
+calibration matched the existing (worse) canvas, got merged in for its
+pixel coverage, and its better accuracy was silently discarded. Fixed:
+`add_entry` now compares `source_max_reprojection_px` and re-bases the
+canvas on whichever calibration is more accurate (warping the OLD canvas's
+content into the NEW, better frame's coordinate system when the incoming
+one wins, symmetric to the normal merge). Verified: canvas's stored error
+correctly updated 12.8px -> 6.5px, and a fresh `run_calibrate_auto.py` run
+now reports 6.5px, not the stale 12.8px.
+
 ## Addendum 5: the calibration bank -- reuse instead of re-detect
 
 Prompted by the person's own observation: this footage cuts/pans often

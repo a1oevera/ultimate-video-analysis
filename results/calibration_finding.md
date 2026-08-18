@@ -162,3 +162,38 @@ non-parallel, non-concurrent field lines) with 2+ pixels each, that's a
 fully validated path to a calibration — no point clicks needed at all. This
 directly solves the original problem (too few reliable corner points) since
 lines are a much lower bar than exact corners.
+
+## Addendum 4: cheap color-filter cone detection -- measured, not reliable enough
+
+Prompted by: "couldn't [we] make a model for automatic field detection... large
+orange cone and very visible lines" -- a fair question, since a colorful
+compact object like a cone is architecturally a much easier target than the
+line-detection approach above (which failed on confounds like the treeline).
+Tested the cheapest version first, no model training: plain HSV color-
+filtering for bright orange (`run_cone_detect_test.py`), scanning 30 frames
+spread across the full `videoplayback.mp4` (134.5 min).
+
+Result: 7/30 frames had candidate blobs; checked each by eye.
+- **1 real hit**: an actual orange/white striped boundary marker pole,
+  correctly found.
+- **1 miss**: a frame with a visible cone in the background the filter
+  didn't catch.
+- **4 false positives**: a mid-broadcast commercial (a soda can ad --
+  broadcasts include ad breaks, which naive frame-sampling doesn't know to
+  skip), a maroon venue field logo, a yellow football goalpost in the
+  background, and — worst — **81 false "candidates" on a single crowd shot,
+  all fans' skin tone**, since skin sits in a similar hue/saturation range as
+  a bright orange cone.
+
+**Verdict**: not reliable as-is. Skin tone is the binding confound — any
+frame with a crowd or close-up player defeats it — and it still missed a
+real cone. Same conclusion as the line-detection attempt above, for a
+different reason: the naive/cheap version of automated field-marker
+detection is genuinely hard on real broadcast footage, not a quick win.
+Would need real additional work to be trustworthy (restrict the search to
+the grass/field region only -- which is circular without already having a
+calibration -- and/or better hue tuning, and/or a trained detector instead
+of a fixed color range). Not pursued further for now; the calibration bank
+(auto-reusing already-calibrated camera framings, see `NEXT_STEPS.md`) is
+the higher-value next investment instead, since it doesn't depend on cone
+visibility at all.

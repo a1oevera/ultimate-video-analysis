@@ -43,6 +43,14 @@ class Calibration:
     # error correlates with how many frames a point's homography was chained
     # through from the segment reference (see results/calibration_finding.md).
     # Optional/None for calibrations fit outside run_calibrate.py.
+    line_details: list = None  # for line-based calibrations: [{"edge": [vi,vj],
+    # "points": [[x,y],...], "frame_indices": [...]}, ...] -- the FULL point
+    # list per line, not just the one representative point kept in
+    # image_points/field_points. Without this, a proper per-line reprojection
+    # check (perpendicular distance of each click from the fitted line) is
+    # only possible live during run_calibrate.py's session, not after the
+    # fact from the saved file -- learned that gap the hard way, keeping the
+    # full data now so it's always re-checkable. None for point-only fits.
 
     def H(self) -> np.ndarray:
         return np.array(self.homography, dtype=np.float64)
@@ -120,7 +128,8 @@ def _hartley_normalize(points):
 def fit_calibration_with_lines(image_points, keypoint_indices, image_path,
                                 line_image_points=None, line_field_edges=None,
                                 cfg: UltimatePitchConfiguration = None,
-                                source_frame_indices=None) -> Calibration:
+                                source_frame_indices=None,
+                                line_frame_indices=None) -> Calibration:
     """Like fit_calibration, but also accepts LINE correspondences -- useful
     when you can't confidently pin down enough exact corner points, but CAN
     identify >=2 pixels that lie somewhere along a known field line (e.g. the
@@ -132,6 +141,11 @@ def fit_calibration_with_lines(image_points, keypoint_indices, image_path,
       lie on ONE field line (same segment reference coords as image_points).
     line_field_edges: parallel list of (vertex_i, vertex_j) 1-based indices
       into cfg.vertices defining which known field line each entry is.
+    line_frame_indices: optional, parallel to line_image_points -- for each
+      line, the raw frame index each of its points was clicked on. Stored in
+      full on the returned Calibration (line_details) so reprojection error
+      can be re-checked later from the saved file, not just live during the
+      clicking session (a real gap this parameter exists to close).
 
     Combined-DLT in Hartley-normalized coordinates: point correspondences
     and line correspondences each contribute 2 rows to the same linear
@@ -232,13 +246,56 @@ def fit_calibration_with_lines(image_points, keypoint_indices, image_path,
     all_image_pts = list(image_points) + [list(pts[0]) for pts in line_image_points]
     all_field_pts = list(field_points) + [
         list(vertices[vi - 1]) for vi, vj in line_field_edges]  # representative point only, for logging
+
+    line_details = None
+    if line_image_points:
+        frame_lists = line_frame_indices if line_frame_indices else [None] * len(line_image_points)
+        line_details = [
+            {"edge": list(edge),
+             "points": [list(map(float, p)) for p in pts],
+             "frame_indices": list(fis) if fis else None}
+            for pts, edge, fis in zip(line_image_points, line_field_edges, frame_lists)
+        ]
+
     return Calibration(homography=H.tolist(),
                         keypoint_labels=[str(i) for i in keypoint_indices] +
                                         [f"line{vi}-{vj}" for vi, vj in line_field_edges],
                         image_points=[list(map(float, p)) for p in all_image_pts],
                         field_points=[list(map(float, p)) for p in all_field_pts],
                         image_path=str(image_path),
-                        source_frame_indices=list(source_frame_indices) if source_frame_indices else None)
+                        source_frame_indices=list(source_frame_indices) if source_frame_indices else None,
+                        line_details=line_details)
+
+
+def check_line_reprojection_error(calib: Calibration, cfg: UltimatePitchConfiguration = None):
+    """Re-derive each line's fitted image-space line (via the field edge's
+    known endpoints projected through calib's homography) and measure the
+    perpendicular distance of every ORIGINALLY CLICKED point from it. Needs
+    calib.line_details (the full per-line point lists) -- unlike point
+    reprojection error, this can't be reconstructed from just the one
+    representative point kept in image_points/field_points. Works on any
+    saved Calibration with line_details, not just live during
+    run_calibrate.py's session -- that gap is exactly why line_details exists.
+
+    Returns a list of dicts: [{"edge": [vi,vj], "errors": [...], "max": ..,
+    "mean": ..}, ...], one per line."""
+    if not calib.line_details:
+        raise ValueError("this calibration has no line_details -- either it's a point-only "
+                          "fit, or it predates line_details being saved (re-run the calibration)")
+    cfg = cfg or UltimatePitchConfiguration()
+    results = []
+    for entry in calib.line_details:
+        vi, vj = entry["edge"]
+        fx1, fy1 = cfg.vertices[vi - 1]
+        fx2, fy2 = cfg.vertices[vj - 1]
+        p1 = field_to_pixel(fx1, fy1, calib)
+        p2 = field_to_pixel(fx2, fy2, calib)
+        l = np.cross([p1[0], p1[1], 1.0], [p2[0], p2[1], 1.0])
+        l = l / np.hypot(l[0], l[1])
+        errors = [abs(l[0] * px + l[1] * py + l[2]) for px, py in entry["points"]]
+        results.append({"edge": entry["edge"], "errors": errors,
+                         "max": max(errors), "mean": float(np.mean(errors))})
+    return results
 
 
 def pixel_to_field(x, y, calib: Calibration):

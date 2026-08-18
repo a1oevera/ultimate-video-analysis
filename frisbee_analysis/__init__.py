@@ -14,7 +14,8 @@ try:
     # Track A (numpy/scipy only) still imports cleanly without it.
     from .mosaic import (MosaicConfig, FrameRegistration, register_pair,
                          register_sequence, interpolate_missing)
-    from .calibration import (Calibration, fit_calibration, pixel_to_field,
-                              field_to_pixel, is_in_field, draw_field_overlay)
+    from .calibration import (Calibration, fit_calibration, fit_calibration_with_lines,
+                              pixel_to_field, field_to_pixel, is_in_field, draw_field_overlay,
+                              check_line_reprojection_error)
 except ImportError:
     pass

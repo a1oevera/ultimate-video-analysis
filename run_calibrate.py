@@ -64,7 +64,8 @@ import sys
 import cv2
 import numpy as np
 from frisbee_analysis import UltimatePitchConfiguration, MosaicConfig, register_sequence
-from frisbee_analysis.calibration import fit_calibration_with_lines, draw_field_overlay, field_to_pixel
+from frisbee_analysis.calibration import (fit_calibration_with_lines, draw_field_overlay,
+                                          field_to_pixel, check_line_reprojection_error)
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/ojuc.mp4"
 start_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 1580.0
@@ -267,6 +268,7 @@ if len(lines) < 4:
 
 edges = list(lines.keys())
 line_image_points = [lines[e] for e in edges]
+line_frame_indices = [lines_frames[e] for e in edges]
 all_frame_indices = [fi for e in edges for fi in lines_frames[e]]
 times = [frame_abs_sec[fi] for fi in all_frame_indices]
 print("Lines clicked: " + ", ".join(f"{LINE_LABELS[e]} ({len(lines[e])} pts)" for e in edges))
@@ -274,35 +276,28 @@ print(f"  (time spread across all clicks: {max(times) - min(times):.1f}s -- wide
       f"homography-chaining drift risk, see results/calibration_finding.md)")
 calib = fit_calibration_with_lines([], [], f"{video_path} t={start_sec:.0f}-{start_sec + duration_sec:.0f}s",
                                     line_image_points=line_image_points, line_field_edges=edges,
-                                    cfg=cfg, source_frame_indices=all_frame_indices)
+                                    cfg=cfg, source_frame_indices=all_frame_indices,
+                                    line_frame_indices=line_frame_indices)
 calib.save(out_path)
 print(f"Saved calibration ({len(edges)} lines) to {out_path}")
 
 # MEASURED: a calibration can look plausible in the overlay image while still
 # being numerically unreliable -- verify it, don't just eyeball it. For lines,
 # the right check isn't point reprojection -- it's PERPENDICULAR DISTANCE of
-# each clicked point from the fitted line (project the known field edge into
-# image space via the fitted H, then measure how far each real click sits
-# from that line). Large distance means either a bad click, drift in frame
-# registration, or the lines don't have enough geometric diversity to
-# constrain the fit well (see the rank-deficiency note in
-# frisbee_analysis/calibration.py and results/calibration_finding.md).
+# each clicked point from the fitted line. Uses the reusable checker (not
+# inline math) so this is the SAME check whether run live here or re-run
+# later from the saved file via check_line_reprojection_error(Calibration.load(...))
+# -- a real gap this closes, see results/calibration_finding.md.
 print("\nReprojection error per line (perpendicular distance of each clicked "
       "point from the fitted line -- want this small, a few px):")
+line_results = check_line_reprojection_error(calib, cfg)
 all_errs = []
-for edge in edges:
-    vi, vj = edge
-    fx1, fy1 = cfg.vertices[vi - 1]
-    fx2, fy2 = cfg.vertices[vj - 1]
-    p1 = field_to_pixel(fx1, fy1, calib)
-    p2 = field_to_pixel(fx2, fy2, calib)
-    l = np.cross([p1[0], p1[1], 1.0], [p2[0], p2[1], 1.0])
-    l = l / np.hypot(l[0], l[1])
-    line_errs = [abs(l[0] * px + l[1] * py + l[2]) for px, py in lines[edge]]
-    all_errs.extend(line_errs)
-    flag = "  <-- HIGH" if max(line_errs) > 20 else ""
-    print(f"  {LINE_LABELS[edge]}: max={max(line_errs):.1f}px mean={np.mean(line_errs):.1f}px "
-          f"(over {len(line_errs)} points){flag}")
+for res in line_results:
+    edge = tuple(res["edge"])
+    all_errs.extend(res["errors"])
+    flag = "  <-- HIGH" if res["max"] > 20 else ""
+    print(f"  {LINE_LABELS[edge]}: max={res['max']:.1f}px mean={res['mean']:.1f}px "
+          f"(over {len(res['errors'])} points){flag}")
 if all_errs and max(all_errs) > 20:
     print("\nWARNING: high reprojection error means this calibration is NOT reliable yet.")
     print("Likely causes: lines too close to parallel/concurrent with each other (need more")

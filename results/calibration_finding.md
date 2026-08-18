@@ -98,3 +98,24 @@ homography before fitting the calibration. The mosaic image is still useful
 for the visual sanity-check overlay afterward, and for a quick eyeball scan
 of roughly where things are — just not as the thing you click precise points
 on.
+
+## Addendum 2: wrong-field contamination, a sharper diagnosis than blending alone
+
+The person's own read on the failed attempt: the "cone" pixel-analysis found
+in `outputs/mosaic_cones.jpg` was likely a real cone — just on a **different,
+adjacent field**, not the one being played/broadcast. This tournament venue
+has multiple simultaneous games visible in the background of nearly every
+wide shot seen throughout this project (confirmed repeatedly, e.g. in the
+very first frames sampled for B1). A cone belonging to a neighboring field's
+boundary is geometrically meaningless for calibrating THIS field's homography
+— fitting one in produces a transform that can look superficially plausible
+per-point but is nonsense overall, consistent with the wildly-off-canvas
+projected overlay from that attempt.
+
+This is at least as likely an explanation as mosaic-blending washout, maybe
+more so — and it's a risk the raw-frame-browsing fix above does NOT
+automatically solve, since raw frames also show the neighboring fields.
+Added an explicit on-screen warning in `run_calibrate.py`: only click cones
+you can confidently place on the same field boundary as the actively
+broadcast game (e.g. in line with that field's own sideline/players), not
+just any orange dot visible in a wide shot.

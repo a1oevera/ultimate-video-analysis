@@ -22,6 +22,17 @@ register_sequence) into the segment's shared reference coordinate system
 (the segment's first frame's own pixel coords) before fitting the final
 calibration, so points clicked on different frames still end up comparable.
 
+*** WRONG-FIELD WARNING (multi-field tournament venues): *** wide shots on
+this footage repeatedly show SEVERAL simultaneous games on adjacent fields in
+the background. A cone-like object far from the active play is not
+necessarily on YOUR field -- only click cones you can confidently place on
+the SAME field boundary as the game actually being broadcast (e.g. clearly
+in line with that field's own sideline/players), not just any orange dot
+visible in the wide shot. A point from the wrong field's geometry will fit a
+homography that looks superficially valid but is nonsense -- this is at least
+as likely a cause of an earlier failed calibration attempt as the mosaic-
+blending issue this script already fixes. See results/calibration_finding.md.
+
 NEEDS A REAL DISPLAY -- run this in your own terminal, not headless. Opens a
 GUI window. Recomputes registration for the given window on startup (same
 cost as run_mosaic_test.py) before you can start clicking.
@@ -129,6 +140,8 @@ def redraw():
                 (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
     cv2.putText(vis, f"placed so far: {len(clicked)}  (need >= 4)", (10, 90),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 2)
+    cv2.putText(vis, "only click cones on THIS field -- other fields' cones may be visible in the background",
+                (10, vis.shape[0] - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 165, 255), 2)
     cv2.imshow("calibrate", vis)
 
 

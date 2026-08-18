@@ -149,7 +149,21 @@ for fi in seg_idx:
     frame_calib = Calibration(homography=frame_to_field.tolist(), keypoint_labels=[],
                                image_points=[], field_points=[], image_path=calib.image_path)
 
-    boxes = detections.xyxy
+    boxes_raw = detections.xyxy
+    # MEASURED: fixing the ByteTrack drop above (see comment) un-hid a real
+    # false positive it had been coincidentally filtering out -- a 7x13px box
+    # (conf 0.34, squarely in the [0.25, 0.35) band ByteTrack used to eat) on
+    # what a visual check confirmed is a field marker/cone, not a person, in
+    # a frame where every real player's box was >=32px tall. Cheap size-
+    # sanity filter: drop boxes under 40% of the frame's own median detection
+    # height (only when there are enough detections, >=3, for that median to
+    # be meaningful) -- a real player at any depth on this footage is still
+    # roughly proportionate to the frame's other players, a cone isn't.
+    if len(boxes_raw) >= 3:
+        heights = boxes_raw[:, 3] - boxes_raw[:, 1]
+        boxes = boxes_raw[heights >= 0.4 * np.median(heights)]
+    else:
+        boxes = boxes_raw
     sats = np.array([torso_saturation(frame, b) for b in boxes]) if len(boxes) else np.array([])
     sat_thresh = np.median(sats) if len(sats) else 0.0
 

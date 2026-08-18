@@ -17,16 +17,25 @@ Per frame:
      homography (segment reference -> field cm) -- same composition
      run_calibrate_preview.py uses for the overlay video.
   2. YOLO person detection (imgsz=1920 -- see results/detection_finding.md,
-     the 640px default misses the whole field) + ByteTrack.
+     the 640px default misses the whole field) + ByteTrack, minus a size-
+     sanity filter that drops cone/marker false positives (see below).
   3. each detection's foot point (bottom-center of the box -- approximates
      ground contact, unlike the box centroid) projected to field cm via the
-     composed homography, then filtered with is_in_field() -- drops
-     sideline/bench people and, per calibration_finding.md's wrong-field
-     warning, anyone who ends up outside THIS field's boundary.
-  4. team classified via torso saturation (run_team_classify_test.py's
-     method -- median saturation vs the frame's own median, since a
-     per-frame threshold is more robust than a fixed constant across
-     lighting changes).
+     composed homography, then filtered with is_in_field(margin_cm=0) --
+     drops sideline/bench people (see Addendum 3 in results/metrics_finding.md
+     on why the margin was tightened to 0) and, per calibration_finding.md's
+     wrong-field warning, anyone who ends up outside THIS field's boundary.
+  4. team classified via GLOBAL (whole-window, not per-frame) torso
+     BRIGHTNESS (HSV value, not saturation -- see torso_brightness()'s
+     docstring for why saturation doesn't reliably separate white from dark
+     jerseys here) threshold, found via Otsu's method over every in-field
+     detection's brightness pooled across the whole window -- a per-frame
+     median (the original approach) silently assumes each frame shows a
+     ~50/50 split of both teams, which measurably misclassified the
+     minority-represented team in imbalanced frames (see results/
+     metrics_finding.md). The torso crop itself also excludes any columns
+     covered by ANOTHER nearby detection's box, to reduce an occluding/
+     overlapping player's jersey color bleeding into the sample.
 
 Then: for each ByteTrack id seen in TWO CONSECUTIVE sampled frames, the
 field-space displacement / dt gives one instantaneous speed sample: bucket
@@ -102,16 +111,60 @@ seg_idx = sorted(fi for fi, sid in segment_of_frame.items() if sid == seg_id)
 print(f"Using segment {seg_id}: {len(seg_idx)} frames")
 
 
-def torso_saturation(frame, box):
+def torso_brightness(frame, box, other_boxes):
+    """Median HSV VALUE (brightness) of a box's torso region (middle 50%
+    width, middle third height -- avoids head/hair and legs/grass at the box
+    edges).
+
+    MEASURED (person report): saturation (the original signal) does NOT
+    reliably separate white from dark jerseys on this footage -- a dark/
+    near-black jersey reads as LOW saturation too (a deep, nearly-neutral
+    color isn't necessarily vivid), so on real frames its saturation
+    overlapped white's enough to get misclassified as the white team.
+    Direct measurement on one frame: saturation ranged 1-56 with heavy
+    overlap between the two teams, but VALUE cleanly split 55-131 (dark
+    jerseys) vs 219-255 (white), a real gap. Switched the whole
+    classification to brightness for this reason -- true for a white-vs-dark
+    matchup like this one; a colored-vs-colored matchup would need hue
+    clustering instead (see results/team_classify_finding.md), not this.
+
+    MEASURED (person report): when players overlap, the naive crop can also
+    sample a NEIGHBORING player's jersey instead of this one's. Mitigation:
+    exclude any torso columns that fall inside another nearby detection's box
+    (in the same vertical band) before taking the median -- best-effort, not
+    a full occlusion solve. Requires a real amount of unoccluded width left
+    (60%, at least 6px) before trusting the filtered crop; a first version of
+    this used a looser 30%-of-any-size floor, which let two heavily-
+    overlapping boxes (near-duplicate detections a few px apart) reduce each
+    other to unreliable few-pixel slivers -- caught by comparing two supposed
+    detections of the same area giving wildly different values (median
+    saturation 1 vs 56) before this fix."""
     x1, y1, x2, y2 = box.astype(int)
     h, w = y2 - y1, x2 - x1
     tx1, tx2 = x1 + w // 4, x2 - w // 4
     ty1, ty2 = y1 + h // 4, y1 + h // 2
-    crop = frame[max(ty1, 0):max(ty2, ty1 + 1), max(tx1, 0):max(tx2, tx1 + 1)]
+    tx1, tx2 = max(tx1, 0), max(tx2, tx1 + 1)
+    ty1, ty2 = max(ty1, 0), max(ty2, ty1 + 1)
+
+    col_excluded = np.zeros(tx2 - tx1, dtype=bool)
+    for ob in other_boxes:
+        ox1, oy1, ox2, oy2 = ob
+        if oy2 <= ty1 or oy1 >= ty2:
+            continue  # other box doesn't vertically overlap the torso band
+        lo, hi = max(int(ox1), tx1), min(int(ox2), tx2)
+        if lo < hi:
+            col_excluded[lo - tx1:hi - tx1] = True
+    keep_cols = np.where(~col_excluded)[0]
+    width = tx2 - tx1
+
+    if len(keep_cols) >= max(0.6 * width, 6):
+        crop = frame[ty1:ty2, tx1:tx2][:, keep_cols]
+    else:
+        crop = frame[ty1:ty2, tx1:tx2]  # too occluded to filter -- best effort
     if crop.size == 0:
         crop = frame[y1:y2, x1:x2]
-    sat = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[:, :, 1]
-    return float(np.median(sat))
+    val = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[:, :, 2]
+    return float(np.median(val))
 
 
 model = YOLO("yolo11n.pt")
@@ -119,11 +172,10 @@ with warnings.catch_warnings():
     warnings.simplefilter("ignore", FutureWarning)
     tracker = sv.ByteTrack()
 
-# per sampled frame (in segment order): {track_id: (field_x_cm, field_y_cm, team)}
-per_frame_tracks = []
-per_frame_time = []
-on_field_counts = {"A": [], "B": []}
-annotated_last = None
+# Pass 1: detect + track + geometry, but DON'T assign team yet -- team needs
+# a threshold pooled across the whole window (see module docstring).
+# per-frame list of dicts: box, tid (or None), fx/fy (field cm), sat
+frame_records = {}
 
 for fi in seg_idx:
     frame = frames[fi]
@@ -164,30 +216,64 @@ for fi in seg_idx:
         boxes = boxes_raw[heights >= 0.4 * np.median(heights)]
     else:
         boxes = boxes_raw
-    sats = np.array([torso_saturation(frame, b) for b in boxes]) if len(boxes) else np.array([])
-    sat_thresh = np.median(sats) if len(sats) else 0.0
 
-    frame_track_map = {}
-    n_a = n_b = 0
-    vis = frame.copy() if fi == seg_idx[-1] else None
-    for box, sat in zip(boxes, sats):
+    records = []
+    for i, box in enumerate(boxes):
         x1, y1, x2, y2 = box
         foot_x, foot_y = (x1 + x2) / 2.0, y2
-        fx, fy = pixel_to_field(foot_x, foot_y, frame_calib)
-        if not is_in_field(foot_x, foot_y, frame_calib, cfg, margin_cm=100.0):
+        # MEASURED (person report): a 100cm outward margin let sideline/bench
+        # people (who stand close to the boundary, not far off it) get
+        # counted as on-field. Tightened to 0 -- no tolerance past the fitted
+        # boundary. Trade-off: a real player exactly on the line could drop
+        # out on foot-point/calibration noise; that's the safer direction
+        # than counting bystanders as players.
+        if not is_in_field(foot_x, foot_y, frame_calib, cfg, margin_cm=0.0):
             continue
-        team = "A" if sat < sat_thresh else "B"
+        fx, fy = pixel_to_field(foot_x, foot_y, frame_calib)
+        other_boxes = np.delete(boxes, i, axis=0)
+        val = torso_brightness(frame, box, other_boxes)
         tid = track_id_by_box.get(tuple(np.round(box, 3)))
-        if tid is not None:
-            frame_track_map[tid] = (fx, fy, team)
+        records.append({"box": box, "tid": tid, "fx": fx, "fy": fy, "val": val})
+    frame_records[fi] = records
+
+# GLOBAL team threshold: pool every in-field detection's brightness across
+# the whole window and split with Otsu's method (finds the threshold that
+# best separates a bimodal distribution) instead of each frame's own median
+# (a per-frame threshold silently assumes each frame shows a ~50/50 split of
+# both teams, which measurably misclassified the minority-represented team
+# in imbalanced frames).
+all_vals = np.array([r["val"] for recs in frame_records.values() for r in recs])
+if len(all_vals) >= 4:
+    val_u8 = np.clip(all_vals, 0, 255).astype(np.uint8).reshape(-1, 1)
+    val_thresh, _ = cv2.threshold(val_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+else:
+    val_thresh = float(np.median(all_vals)) if len(all_vals) else 0.0
+print(f"\nGlobal team brightness threshold (Otsu, over {len(all_vals)} pooled in-field "
+      f"detections): {val_thresh:.1f}")
+
+# Pass 2: assign team with the global threshold, build outputs.
+per_frame_tracks = []
+per_frame_time = []
+on_field_counts = {"A": [], "B": []}
+annotated_last = None
+
+for fi in seg_idx:
+    frame_track_map = {}
+    n_a = n_b = 0
+    vis = frames[fi].copy() if fi == seg_idx[-1] else None
+    for r in frame_records[fi]:
+        team = "A" if r["val"] >= val_thresh else "B"  # A = brighter/white jersey, B = darker
+        if r["tid"] is not None:
+            frame_track_map[r["tid"]] = (r["fx"], r["fy"], team)
         if team == "A":
             n_a += 1
         else:
             n_b += 1
         if vis is not None:
+            x1, y1, x2, y2 = r["box"]
             color = (255, 100, 0) if team == "A" else (0, 0, 255)
             cv2.rectangle(vis, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-            label = f"#{tid}" if tid is not None else "?"
+            label = f"#{r['tid']}" if r["tid"] is not None else "?"
             cv2.putText(vis, label, (int(x1), int(y1) - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
     on_field_counts["A"].append(n_a)
     on_field_counts["B"].append(n_b)

@@ -167,6 +167,41 @@ def torso_brightness(frame, box, other_boxes):
     return float(np.median(val))
 
 
+def dedupe_boxes(boxes, confs, iou_thresh=0.45, containment_thresh=0.6):
+    """MEASURED (person report): a "double box" on one player -- two YOLO
+    detections for the same physical person that its own NMS didn't merge.
+    Confirmed by direct inspection: box (534,147,551,190) and box
+    (539,147,550,190) are the same player -- the second is almost entirely
+    CONTAINED inside the first (same y-range, x-range a strict subset), which
+    a plain IoU check can miss when one box is much smaller than the other
+    (small intersection-over-UNION despite near-total overlap of the smaller
+    box). Keep the higher-confidence box of any pair that's either high-IoU
+    OR where the smaller box is mostly contained in the larger one."""
+    if len(boxes) < 2:
+        return boxes
+    order = np.argsort(-confs)
+    keep = []
+    for i in order:
+        xa1, ya1, xa2, ya2 = boxes[i]
+        area_i = max(0, xa2 - xa1) * max(0, ya2 - ya1)
+        is_dup = False
+        for j in keep:
+            xb1, yb1, xb2, yb2 = boxes[j]
+            area_j = max(0, xb2 - xb1) * max(0, yb2 - yb1)
+            ix1, iy1 = max(xa1, xb1), max(ya1, yb1)
+            ix2, iy2 = min(xa2, xb2), min(ya2, yb2)
+            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            union = area_i + area_j - inter
+            iou = inter / union if union > 0 else 0.0
+            containment = inter / min(area_i, area_j) if min(area_i, area_j) > 0 else 0.0
+            if iou > iou_thresh or containment > containment_thresh:
+                is_dup = True
+                break
+        if not is_dup:
+            keep.append(i)
+    return boxes[sorted(keep)]
+
+
 model = YOLO("yolo11n.pt")
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", FutureWarning)
@@ -202,6 +237,7 @@ for fi in seg_idx:
                                image_points=[], field_points=[], image_path=calib.image_path)
 
     boxes_raw = detections.xyxy
+    confs_raw = detections.confidence
     # MEASURED: fixing the ByteTrack drop above (see comment) un-hid a real
     # false positive it had been coincidentally filtering out -- a 7x13px box
     # (conf 0.34, squarely in the [0.25, 0.35) band ByteTrack used to eat) on
@@ -212,10 +248,14 @@ for fi in seg_idx:
     # be meaningful) -- a real player at any depth on this footage is still
     # roughly proportionate to the frame's other players, a cone isn't.
     if len(boxes_raw) >= 3:
-        heights = boxes_raw[:, 3] - boxes_raw[:, 1]
-        boxes = boxes_raw[heights >= 0.4 * np.median(heights)]
+        size_ok = boxes_raw[:, 3] - boxes_raw[:, 1] >= 0.4 * np.median(boxes_raw[:, 3] - boxes_raw[:, 1])
+        boxes, confs = boxes_raw[size_ok], confs_raw[size_ok]
     else:
-        boxes = boxes_raw
+        boxes, confs = boxes_raw, confs_raw
+    # MEASURED (person report): a "double box" on one player -- two separate
+    # YOLO detections for the same person that YOLO's own NMS didn't merge.
+    # See dedupe_boxes() docstring.
+    boxes = dedupe_boxes(boxes, confs)
 
     records = []
     for i, box in enumerate(boxes):

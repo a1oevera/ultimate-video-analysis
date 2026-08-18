@@ -76,12 +76,21 @@ start_frame = int(round(start_sec * video_fps))
 n_samples = int(duration_sec * sample_fps)
 
 frames = []
+frame_abs_sec = []  # absolute video timestamp (seconds) per loaded frame -- so
+# the on-screen display can show exactly what point in the video you're
+# looking at, not just a relative index (see results/calibration_finding.md
+# on why "what time is this actually showing" needs to be directly verifiable).
 for k in range(n_samples):
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame + k * step)
+    target_frame = start_frame + k * step
+    cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
     ok, frame = cap.read()
     if not ok:
         break
     frames.append(frame)
+    # use POS_FRAMES *after* the seek, not the requested target -- if the
+    # seek snapped to a different frame than requested, this reflects reality
+    actual_frame = cap.get(cv2.CAP_PROP_POS_FRAMES) - 1  # -1: read() advances past it
+    frame_abs_sec.append(actual_frame / video_fps if actual_frame > 0 else target_frame / video_fps)
 cap.release()
 print(f"Loaded {len(frames)} frames (t={start_sec:.0f}-{start_sec + duration_sec:.0f}s, ~{sample_fps} fps)")
 
@@ -136,9 +145,11 @@ def redraw():
     else:
         label = f"All prompted -- {len(clicked)} placed. Press 'q' to finish."
     cv2.putText(vis, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    cv2.putText(vis, f"frame {browse_pos[0] + 1}/{len(seg_idx)} in segment  "
+    abs_t = frame_abs_sec[fi]
+    cv2.putText(vis, f"VIDEO TIME: {int(abs_t // 60)}:{abs_t % 60:05.2f}  "
+                      f"(frame {browse_pos[0] + 1}/{len(seg_idx)} in segment)  "
                       f"n/p=browse click=mark s=skip u=undo q=finish",
-                (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+                (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     cv2.putText(vis, f"placed so far: {len(clicked)}  (need >= 4)", (10, 90),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 2)
     cv2.putText(vis, "only click cones on THIS field -- other fields' cones may be visible in the background",
@@ -188,9 +199,11 @@ if len(clicked) < 4:
 indices = list(clicked.keys())
 points = [clicked[i] for i in indices]
 frame_indices = [clicked_frame[i] for i in indices]
-print(f"Points clicked on raw frame indices (within segment): {frame_indices}")
-print(f"  (spread: {max(frame_indices) - min(frame_indices)} frames apart -- "
-      f"wider spread means more homography-chaining drift risk, see results/calibration_finding.md)")
+times = [frame_abs_sec[fi] for fi in frame_indices]
+print("Points clicked at video times: " +
+      ", ".join(f"kp{idx}={int(t // 60)}:{t % 60:05.2f}" for idx, t in zip(indices, times)))
+print(f"  (spread: {max(times) - min(times):.1f}s apart -- wider spread means more "
+      f"homography-chaining drift risk, see results/calibration_finding.md)")
 calib = fit_calibration(points, indices, f"{video_path} t={start_sec:.0f}-{start_sec + duration_sec:.0f}s",
                          cfg, source_frame_indices=frame_indices)
 calib.save(out_path)

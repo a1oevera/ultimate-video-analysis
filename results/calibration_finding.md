@@ -119,3 +119,46 @@ Added an explicit on-screen warning in `run_calibrate.py`: only click cones
 you can confidently place on the same field boundary as the actively
 broadcast game (e.g. in line with that field's own sideline/players), not
 just any orange dot visible in a wide shot.
+
+## Addendum 3: line correspondences work standalone, but NOT mixed with points (open bug)
+
+Real segments on the UFA footage kept producing too few *usable* corner
+points (registration breaks meant left-side and right-side content landed in
+different, non-bridgeable segments — see the live debugging session that
+led to `_reclaim_failed_frames` in `mosaic.py`). Point requested: fit a
+homography from a combination of point clicks AND line evidence (you don't
+need the exact corner, just 2+ pixels you're confident lie somewhere along a
+known field line, which is a much easier ask than pinning down an exact
+intersection).
+
+Implemented `fit_calibration_with_lines` (combined-DLT with Hartley
+normalization, using the standard `l_image = H^T @ l_field` projective
+duality for line constraints). Extensive synthetic validation:
+
+- **Points-only** (4 points, own code path): exact recovery, 0px error. ✅
+- **Lines-only** (4 lines, zero points): exact recovery, 0px error. ✅
+- **Mixed** (any split of points + lines, e.g. 2+2 or 3+1): consistently
+  **rank-deficient by exactly 1**, even with fully random synthetic
+  correspondences (not a geometry-specific fluke — tested multiple
+  configurations, including deliberately non-collinear, non-parallel,
+  non-vertex-sharing ones). The row formula itself is individually verified
+  correct (evaluates to ~0 at the true homography for every row), the
+  normalization is individually verified correct (matches `cv2.findHomography`
+  exactly for points alone) — but something about how the two row types
+  combine loses one degree of freedom that neither type loses on its own.
+  **Root cause not found** despite methodical isolation (point rows, line
+  rows, normalization, and denormalization all individually confirmed
+  correct in isolation).
+
+**Until this is root-caused, `fit_calibration_with_lines` warns loudly when
+you mix points and lines, and hard-fails with a clear error if the resulting
+constraint matrix doesn't reach full rank** (checked via the singular value
+gap, not just element count) — silently returning an arbitrary wrong
+homography from an under-determined system would be far worse than refusing.
+
+**What's actually usable right now: lines-only.** If you can identify 4
+different field lines (e.g. both sidelines + both goal lines, or any 4
+non-parallel, non-concurrent field lines) with 2+ pixels each, that's a
+fully validated path to a calibration — no point clicks needed at all. This
+directly solves the original problem (too few reliable corner points) since
+lines are a much lower bar than exact corners.

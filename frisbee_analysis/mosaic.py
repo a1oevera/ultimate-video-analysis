@@ -117,7 +117,35 @@ def register_sequence(frames: list[np.ndarray], cfg: MosaicConfig = MosaicConfig
             last_good_idx = i
         else:
             results.append(FrameRegistration(i, None, n_inliers, False, segment_id))
-    return results
+    return _reclaim_failed_frames(frames, results, cfg)
+
+
+def _reclaim_failed_frames(frames, results: list[FrameRegistration], cfg: MosaicConfig) -> list[FrameRegistration]:
+    """Second-chance pass for ok=False frames. MEASURED on real footage
+    (results/calibration_finding.md): a frame that fails against the segment
+    BEFORE it can still register excellently against the segment AFTER it --
+    e.g. one frame scored only 5 inliers against the prior segment's end but
+    1017 inliers against the next segment's start. The main forward pass
+    never checks this direction (it only ever looks backward: against the
+    stale anchor, then against the immediately preceding raw frame), so a
+    frame like this gets permanently stranded even though it's really just
+    the start of the next segment misclassified as a gap. Try each failed
+    frame against the next available segment's reference frame; fold it in
+    if it matches instead of leaving a browsable gap in the middle of good
+    footage."""
+    out = list(results)
+    for i, r in enumerate(out):
+        if r.ok:
+            continue
+        next_ok = next((j for j in range(r.frame_idx + 1, len(frames)) if out[j].ok), None)
+        if next_ok is None:
+            continue
+        target = out[next_ok]
+        H_step, n_step = register_pair(frames[target.frame_idx], frames[r.frame_idx], cfg)
+        if H_step is not None and n_step >= cfg.min_inliers:
+            H_full = target.homography @ H_step
+            out[i] = FrameRegistration(r.frame_idx, H_full, n_step, True, target.segment_id)
+    return out
 
 
 def interpolate_missing(results: list[FrameRegistration]) -> list[FrameRegistration]:

@@ -65,3 +65,36 @@ per segment — cheap, since a segment can be minutes long) and let the
 existing homography chain do the propagation automatically. Revisit
 automated detection only if manual calibration turns out to be the actual
 bottleneck once the rest of the pipeline is running.
+
+## Addendum: blended mosaic images are the wrong thing to click on
+
+First version of `run_calibrate.py` had the user click keypoints directly on
+the composited mosaic image (e.g. `outputs/mosaic_sample.jpg`,
+`outputs/mosaic_cones.jpg`). Went looking for calibration-worthy footage by
+scanning many timestamps and building several candidate mosaics; one
+(`outputs/mosaic_cones.jpg`, t≈26:20–29:20, a real 41-frame continuous
+segment) appeared under pixel-level HSV inspection to show a cone at a
+specific pixel. **The person checked it in the actual tool and confirmed no
+cone was visible there at all.**
+
+Root cause: mosaic building (`run_mosaic_visualize.py`) blends multiple
+warped frames together (weighted pixel averaging). A cone is small relative
+to a frame, and even sub-pixel registration error smears it across a few
+pixels when several frames' cone positions don't perfectly stack — the
+averaging can wash it out or shift it, badly enough that automated
+pixel-level color analysis found a spurious signal that direct human viewing
+correctly rejected. **This is exactly the kind of thing a human eye on a
+real image catches and a pixel-difference script can get fooled by** —
+trust the person's visual check over the automated one.
+
+**Fix, not a workaround**: `run_calibrate.py` now has the user browse and
+click on RAW (unblended) frames within a segment instead of the composited
+mosaic image. `frisbee_analysis/mosaic.py`'s `register_sequence` already
+computes each raw frame's own homography into the segment's shared
+coordinate system — the tool now uses that directly: click a keypoint on
+whichever raw frame shows it clearest (different keypoints can come from
+different frames), and each click gets transformed through that frame's
+homography before fitting the calibration. The mosaic image is still useful
+for the visual sanity-check overlay afterward, and for a quick eyeball scan
+of roughly where things are — just not as the thing you click precise points
+on.

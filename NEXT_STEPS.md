@@ -142,19 +142,31 @@ call already made for identity in `CONTEXT.md`. Revisit automated detection
 (grass masking + orientation filtering + cone color detection) only if manual
 calibration becomes the actual bottleneck.
 
-**✅ Manual calibration tool BUILT**: `frisbee_analysis/calibration.py`
-(`fit_calibration`, `pixel_to_field`, `field_to_pixel`, `is_in_field`,
-`draw_field_overlay`) + `run_calibrate.py` (interactive — click keypoints on
-a mosaic image, 's' to skip an off-camera one, needs >=4 total). A cone being
-off-camera doesn't block calibration: verified with a synthetic-homography
-test that fitting from 8 of the 10 keypoints (skipping the two near-back
-corners closest to the camera — confirmed the common case on this footage)
-recovers the position of the two SKIPPED points to ~0cm error, and correctly
-computes the far goal line's position without ever seeing its cones. The
-interactive click loop itself needs a real display and hasn't been run for
-real yet — that's on you to try with `python run_calibrate.py
-outputs/mosaic_sample.jpg`. Next: run it for real, then wire `is_in_field`
-into the B3 detections to filter out sideline/bench people.
+**✅ Manual calibration tool BUILT, then FIXED after real user feedback**:
+`frisbee_analysis/calibration.py` (`fit_calibration`, `pixel_to_field`,
+`field_to_pixel`, `is_in_field`, `draw_field_overlay`) + `run_calibrate.py`
+(interactive). A cone being off-camera doesn't block calibration: verified
+with a synthetic-homography test that fitting from 8 of the 10 keypoints
+(skipping the two near-back corners closest to the camera — confirmed the
+common case on this footage) recovers the position of the two SKIPPED points
+to ~0cm error, and correctly computes the far goal line's position without
+ever seeing its cones.
+
+First version had the user click on a composited mosaic image — the person
+tried it and reported no cone was visible where pixel-level analysis said one
+should be. Root cause: mosaic blending washes out/distorts small objects like
+cones (see `results/calibration_finding.md`'s addendum) — trust the human
+eye on the real image over automated pixel analysis. Fixed: `run_calibrate.py`
+now rebuilds the segment registration itself and has the user browse+click on
+RAW frames (`n`/`p` to move between them within the segment), transforming
+each click through that specific frame's own homography into the shared
+segment coordinate system. Different keypoints can come from different
+frames. Verified the transform logic end-to-end with simulated clicks on
+different frames of a real segment before handing back to the user — still
+needs a real interactive run to actually place points, which needs a display
+this environment doesn't have. Run: `python run_calibrate.py videos/ojuc.mp4
+1580 180 1.0`. Next: run it for real, then wire `is_in_field` into the B3
+detections to filter out sideline/bench people.
 
 **Known constraint (from the person, not yet re-verified against this
 footage): brick marks aren't painted on most fields**, especially

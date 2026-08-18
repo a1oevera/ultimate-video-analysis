@@ -18,5 +18,6 @@ try:
                               pixel_to_field, field_to_pixel, is_in_field, draw_field_overlay,
                               check_line_reprojection_error)
     from .calibration_bank import try_auto_calibrate, add_entry as add_bank_entry
+    from .shot_filter import looks_like_field_view, field_view_score
 except ImportError:
     pass

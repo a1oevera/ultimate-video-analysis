@@ -86,3 +86,26 @@ building it, not just a nice-to-have.
    worthwhile investment specifically BECAUSE of this finding, not despite
    it -- it should recover matches that strict single-frame-pair matching
    misses.
+
+## Addendum: master-mosaic upgrade built and verified
+
+`frisbee_analysis/calibration_bank.py` rewritten (same public API --
+`try_auto_calibrate`/`add_entry` -- so `run_calibrate.py`/`run_calibrate_auto.py`
+needed no changes) to match against a GROWING COMPOSITE CANVAS per distinct
+framing family, not a single saved frame. Reuses `run_mosaic_visualize.py`'s
+canvas-bounds/translation math for growing the canvas, but composites as a
+COLLAGE (paint only currently-empty canvas pixels, never blend/average) to
+avoid the washout problem from `calibration_finding.md`'s addendum. A
+canvas's calibration is re-expressed via `inv(T)` whenever the canvas grows,
+so it always maps CURRENT canvas pixels -> field cm correctly.
+
+Verified end-to-end on real footage: seeded a canvas from one frame of the
+real t=1470 calibration, then merged in a DIFFERENT frame from later in the
+same continuous segment (genuinely overlapping, not identical) -- canvas
+correctly grew from 640x360 to 657x374 and both frames landed in the SAME
+canvas, not two separate ones. Visually confirmed the merged composite
+(`outputs/test_merged_canvas.jpg`, not committed) has no seams/ghosting,
+consistent with collage compositing being seam-safe when registration is
+accurate. Re-ran `run_calibrate_auto.py` on the same window afterward: still
+matched (1,913 inliers) and produced a correct overlay. Backward compatible
+with the older bare-frame bank format (a canvas that just hasn't grown yet).

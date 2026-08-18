@@ -136,6 +136,26 @@ numbers looking wrong. The numbers looked *plausible* every single time
 before the fix. Keep treating the visual spot-check as load-bearing, not
 optional, before trusting an aggregate from this pipeline.
 
+## Addendum 4: double-boxed player (duplicate YOLO detections, not merged by NMS)
+
+Person spotted a literal double box around one dark-jersey player. Confirmed
+by direct inspection: box `(534,147,551,190)` and box `(539,147,550,190)` are
+the same physical player — the second almost entirely CONTAINED inside the
+first (identical y-range, x-range a strict subset) — that YOLO's own NMS
+left unmerged. A plain IoU check alone would likely have missed this too:
+when one box is much smaller than the other, intersection-over-*union* stays
+low even at near-total overlap of the smaller box, since the union is
+dominated by the larger box's area.
+
+Fix: `dedupe_boxes()` — for any pair of same-frame boxes with high IoU OR
+where the smaller box is mostly *contained* in the larger one (checked
+separately, since containment catches what IoU misses), keep only the
+higher-confidence box. Verified: the double box disappears on the same real
+frame, and — more convincing than one frame — the pooled detection count
+across the *entire* 32-frame window dropped from 340 to 290, meaning this
+was a widespread duplication issue across many frames, not a single-frame
+fluke.
+
 ## Recommendation
 
 - Re-run calibration with the current `run_calibrate.py` (saves

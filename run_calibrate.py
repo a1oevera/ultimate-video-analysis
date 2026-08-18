@@ -1,37 +1,39 @@
 """
-Interactive manual field calibration: click calibration keypoints (cones +
-brick marks, from frisbee_analysis/ultimate_config.py) on RAW frames within a
-segment, not on a blended mosaic image.
+Interactive manual field calibration: click LINE correspondences (>=2 pixels
+you're confident lie somewhere along a known field line -- NOT exact corner
+points) on RAW frames within a segment, not on a blended mosaic image.
 
-MEASURED: cones are small enough that mosaic blending (weighted-averaging
-overlapping warped frames, see run_mosaic_visualize.py) washes them out or
-distorts their apparent position -- a cone that looked present under
-pixel-level HSV analysis of a built mosaic turned out NOT actually visible in
-practice when checked in a real viewer. Real objects are much clearer in a
-single raw (unblended) frame at full quality. See results/calibration_finding.md.
+WHY LINES, NOT POINTS: real footage kept producing too few reliable exact
+corner points (see results/calibration_finding.md) -- registration breaks
+routinely split "left side visible" from "right side visible" into different,
+non-bridgeable segments, so a session often only has clean access to 2-3
+corners at best. A line constraint is a much lower bar: you don't need the
+precise intersection, just confidence about which painted line you're
+looking at. `fit_calibration_with_lines` (lines-only) is synthetically
+validated to recover a homography exactly; MIXING points and lines has a
+real, unresolved bug (see the same doc) -- this tool deliberately only
+collects lines, never points, to stay on the validated path.
 
-Fix: this script rebuilds the SAME segment registration
-frisbee_analysis.mosaic already computes (register_sequence) and lets you
-browse the RAW frames within that segment, clicking each keypoint on
-whichever frame shows it most clearly -- different keypoints can come from
-different frames, since they only need to be visible SOMEWHERE across the
-whole segment, not all at once in one image (see
-frisbee_analysis/calibration.py's module docstring). Each click is
-transformed through THAT frame's own homography (already computed by
-register_sequence) into the segment's shared reference coordinate system
-(the segment's first frame's own pixel coords) before fitting the final
-calibration, so points clicked on different frames still end up comparable.
+MEASURED: cones/mosaics have their own problems (blending washout, wrong-
+field contamination) that lines mostly sidestep -- a sideline is long enough
+to still be identifiable even when heavily blurred or partially out of frame,
+and you're not trying to pin down one small object.
+
+Fix carried over from the earlier points-only version: this script rebuilds
+the SAME segment registration frisbee_analysis.mosaic already computes
+(register_sequence) and lets you browse RAW frames within that segment,
+clicking each line's points on whichever frame shows it most clearly --
+different lines (and different points on the same line) can come from
+different frames. Each click is transformed through THAT frame's own
+homography into the segment's shared reference coordinate system before
+fitting, so clicks from different frames still end up comparable.
 
 *** WRONG-FIELD WARNING (multi-field tournament venues): *** wide shots on
 this footage repeatedly show SEVERAL simultaneous games on adjacent fields in
-the background. A cone-like object far from the active play is not
-necessarily on YOUR field -- only click cones you can confidently place on
-the SAME field boundary as the game actually being broadcast (e.g. clearly
-in line with that field's own sideline/players), not just any orange dot
-visible in the wide shot. A point from the wrong field's geometry will fit a
-homography that looks superficially valid but is nonsense -- this is at least
-as likely a cause of an earlier failed calibration attempt as the mosaic-
-blending issue this script already fixes. See results/calibration_finding.md.
+the background. Only click points you can confidently place on the SAME
+field boundary as the game actually being broadcast -- a line from the wrong
+field's geometry will fit a homography that looks superficially valid but is
+nonsense. See results/calibration_finding.md.
 
 NEEDS A REAL DISPLAY -- run this in your own terminal, not headless. Opens a
 GUI window. Recomputes registration for the given window on startup (same
@@ -39,14 +41,17 @@ cost as run_mosaic_test.py) before you can start clicking.
 
 Controls:
   n / p       next / previous frame within the segment (browse to find
-              whichever frame shows the current keypoint clearest)
-  left-click  mark the current keypoint at that pixel, in the CURRENTLY
-              SHOWN frame
-  s           skip the current keypoint (checked several frames, still not
-              visible -- fine, you only need >=4 total, not all 10)
-  u           undo the last placed keypoint, go back to it
-  q           finish once you have enough points (need >= 4, more is better,
-              spread across the field rather than clustered)
+              whichever frame shows the current line clearest)
+  left-click  add a point to the CURRENT line, at that pixel in the
+              CURRENTLY SHOWN frame (add as many as you want -- more points
+              on the same line = a more robust fit via total-least-squares)
+  SPACE       finish the current line (needs >= 2 points) and move to the
+              next one
+  s           skip the current line entirely (checked several frames, still
+              not visible -- fine, you only need >= 4 lines total, not all 6)
+  u           undo: removes the last point on the current line, or if there
+              are none, re-opens the previous line for editing
+  q           finish once you have enough lines (need >= 4, more is better)
 
 Run:  python run_calibrate.py <video_path> [start_sec] [duration_sec] [sample_fps] [out.json] [segment_id]
 Prints every segment found in the window (id, frame count, time range)
@@ -59,7 +64,7 @@ import sys
 import cv2
 import numpy as np
 from frisbee_analysis import UltimatePitchConfiguration, MosaicConfig, register_sequence
-from frisbee_analysis.calibration import fit_calibration, draw_field_overlay, field_to_pixel
+from frisbee_analysis.calibration import fit_calibration_with_lines, draw_field_overlay, field_to_pixel
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/ojuc.mp4"
 start_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 1580.0
@@ -153,26 +158,25 @@ print(f"Using segment {best_seg}: {len(seg_idx)} frames to browse "
       f"(t={int(t0//60)}:{t0%60:05.2f} - {int(t1//60)}:{t1%60:05.2f})")
 
 cfg = UltimatePitchConfiguration()
-KEYPOINT_LABELS = {
-    1: "cone: near-left back corner (closest to camera -- often off-camera)",
-    2: "cone: near-right back corner (closest to camera -- often off-camera)",
-    3: "cone: near-left goal corner",
-    4: "cone: near-right goal corner",
-    5: "cone: far-left goal corner",
-    6: "cone: far-right goal corner",
-    7: "cone: far-left back corner",
-    8: "cone: far-right back corner",
-    9: "brick mark: near (often not marked on recreational/coned fields -- skip freely)",
-    10: "brick mark: far (often not marked on recreational/coned fields -- skip freely)",
+LINE_LABELS = {
+    (1, 7): "near sideline (left side of field, closest to camera)",
+    (2, 8): "far sideline (right side of field)",
+    (3, 4): "near goal line",
+    (5, 6): "far goal line",
+    (1, 2): "near back line (very close to camera -- often off-camera)",
+    (7, 8): "far back line",
 }
-# Reliable goal-line/back corners first, then the commonly-unreliable near-back
-# corners and brick marks last -- see results/calibration_finding.md.
-order = [3, 4, 5, 6, 7, 8, 1, 2, 9, 10]
+# Sidelines + goal lines first: long lines, measured most likely to actually
+# be visible/painted. Back lines last -- short, near-camera ones are often
+# out of frame. See results/calibration_finding.md.
+order = [(1, 7), (2, 8), (3, 4), (5, 6), (1, 2), (7, 8)]
 
-browse_pos = [0]    # index into seg_idx
-clicked = {}         # keypoint_index -> (x, y) in the SEGMENT's reference coords
-clicked_frame = {}   # keypoint_index -> raw frame index it was clicked on (diagnostic)
-current = [0]        # index into `order`
+browse_pos = [0]     # index into seg_idx
+lines = {}            # field_edge -> list of (x, y) in SEGMENT reference coords
+lines_frames = {}     # field_edge -> list of raw frame indices (diagnostic, parallel to lines[edge])
+current_pts = []      # points collected so far for the line CURRENTLY being clicked
+current_frames = []   # frame each of current_pts was clicked on
+current = [0]          # index into `order`
 
 
 def current_frame_idx():
@@ -183,18 +187,29 @@ def redraw():
     fi = current_frame_idx()
     vis = frames[fi].copy()
     if current[0] < len(order):
-        label = f"Click: {KEYPOINT_LABELS[order[current[0]]]}"
+        edge = order[current[0]]
+        label = f"Click 2+ points on: {LINE_LABELS[edge]}  ({len(current_pts)} placed on this line)"
     else:
-        label = f"All prompted -- {len(clicked)} placed. Press 'q' to finish."
-    cv2.putText(vis, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        label = f"All prompted -- {len(lines)} lines done. Press 'q' to finish."
+    cv2.putText(vis, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
     abs_t = frame_abs_sec[fi]
     cv2.putText(vis, f"VIDEO TIME: {int(abs_t // 60)}:{abs_t % 60:05.2f}  "
-                      f"(frame {browse_pos[0] + 1}/{len(seg_idx)} in segment)  "
-                      f"n/p=browse click=mark s=skip u=undo q=finish",
+                      f"(frame {browse_pos[0] + 1}/{len(seg_idx)} in segment)",
                 (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-    cv2.putText(vis, f"placed so far: {len(clicked)}  (need >= 4)", (10, 90),
+    cv2.putText(vis, "n/p=browse  click=add point  SPACE=finish line  s=skip line  u=undo  q=finish",
+                (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+    cv2.putText(vis, f"lines done: {len(lines)}  (need >= 4)", (10, 110),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 2)
-    cv2.putText(vis, "only click cones on THIS field -- other fields' cones may be visible in the background",
+    # draw points already placed on the line in progress, if they're on THIS frame
+    for (px, py), pfi in zip(current_pts, current_frames):
+        if pfi == fi:
+            # current_pts are stored in segment-reference coords -- back-project
+            # through this frame's own homography to draw them in the right spot
+            H_inv = np.linalg.inv(homography_by_idx[fi])
+            proj = cv2.perspectiveTransform(np.array([[[px, py]]]), H_inv)
+            cx, cy = proj[0, 0]
+            cv2.circle(vis, (int(cx), int(cy)), 5, (0, 255, 0), -1)
+    cv2.putText(vis, "only click points on THIS field -- other fields may be visible in the background",
                 (10, vis.shape[0] - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 165, 255), 2)
     cv2.imshow("calibrate", vis)
 
@@ -204,9 +219,8 @@ def on_mouse(event, x, y, flags, param):
         fi = current_frame_idx()
         H = homography_by_idx[fi]
         pt = cv2.perspectiveTransform(np.array([[[float(x), float(y)]]]), H)
-        clicked[order[current[0]]] = (float(pt[0, 0, 0]), float(pt[0, 0, 1]))
-        clicked_frame[order[current[0]]] = fi
-        current[0] += 1
+        current_pts.append((float(pt[0, 0, 0]), float(pt[0, 0, 1])))
+        current_frames.append(fi)
         redraw()
 
 
@@ -221,58 +235,80 @@ while True:
     elif key == ord('p'):
         browse_pos[0] = max(0, browse_pos[0] - 1)
         redraw()
+    elif key == ord(' ') and current[0] < len(order):
+        if len(current_pts) >= 2:
+            edge = order[current[0]]
+            lines[edge] = list(current_pts)
+            lines_frames[edge] = list(current_frames)
+            current_pts, current_frames = [], []
+            current[0] += 1
+            redraw()
     elif key == ord('s') and current[0] < len(order):
+        current_pts, current_frames = [], []
         current[0] += 1
         redraw()
     elif key == ord('u'):
-        if current[0] > 0:
+        if current_pts:
+            current_pts.pop()
+            current_frames.pop()
+        elif current[0] > 0:
             current[0] -= 1
-            clicked.pop(order[current[0]], None)
-            clicked_frame.pop(order[current[0]], None)
-            redraw()
+            edge = order[current[0]]
+            current_pts = lines.pop(edge, [])
+            current_frames = lines_frames.pop(edge, [])
+        redraw()
     elif key == ord('q'):
         break
 cv2.destroyAllWindows()
 
-if len(clicked) < 4:
-    sys.exit(f"only {len(clicked)} points placed -- need >= 4 for a homography. "
-              f"Re-run and click more (browse more frames with n/p).")
+if len(lines) < 4:
+    sys.exit(f"only {len(lines)} lines placed -- need >= 4 for a homography. "
+              f"Re-run and click more (browse more frames with n/p, SPACE to finish each line).")
 
-indices = list(clicked.keys())
-points = [clicked[i] for i in indices]
-frame_indices = [clicked_frame[i] for i in indices]
-times = [frame_abs_sec[fi] for fi in frame_indices]
-print("Points clicked at video times: " +
-      ", ".join(f"kp{idx}={int(t // 60)}:{t % 60:05.2f}" for idx, t in zip(indices, times)))
-print(f"  (spread: {max(times) - min(times):.1f}s apart -- wider spread means more "
+edges = list(lines.keys())
+line_image_points = [lines[e] for e in edges]
+all_frame_indices = [fi for e in edges for fi in lines_frames[e]]
+times = [frame_abs_sec[fi] for fi in all_frame_indices]
+print("Lines clicked: " + ", ".join(f"{LINE_LABELS[e]} ({len(lines[e])} pts)" for e in edges))
+print(f"  (time spread across all clicks: {max(times) - min(times):.1f}s -- wider spread means more "
       f"homography-chaining drift risk, see results/calibration_finding.md)")
-calib = fit_calibration(points, indices, f"{video_path} t={start_sec:.0f}-{start_sec + duration_sec:.0f}s",
-                         cfg, source_frame_indices=frame_indices)
+calib = fit_calibration_with_lines([], [], f"{video_path} t={start_sec:.0f}-{start_sec + duration_sec:.0f}s",
+                                    line_image_points=line_image_points, line_field_edges=edges,
+                                    cfg=cfg, source_frame_indices=all_frame_indices)
 calib.save(out_path)
-print(f"Saved calibration ({len(points)} points: {indices}) to {out_path}")
+print(f"Saved calibration ({len(edges)} lines) to {out_path}")
 
 # MEASURED: a calibration can look plausible in the overlay image while still
-# being numerically unreliable -- verify it, don't just eyeball it. Reprojection
-# error re-derives each point's pixel position from its known field coordinate
-# through the fitted homography and compares to where it was actually clicked;
-# large error means the points don't actually agree on one consistent
-# homography (bad click, bad frame registration, or points too close to
-# collinear to constrain the fit).
-print("\nReprojection error per point (self-fit residual -- want this small, a few px):")
-errs = []
-for label, img_pt, field_pt, fi in zip(calib.keypoint_labels, calib.image_points, calib.field_points, frame_indices):
-    proj_x, proj_y = field_to_pixel(field_pt[0], field_pt[1], calib)
-    err = ((proj_x - img_pt[0]) ** 2 + (proj_y - img_pt[1]) ** 2) ** 0.5
-    errs.append(err)
-    frames_from_ref = fi - seg_idx[0]
-    flag = "  <-- HIGH, this point may be bad" if err > 20 else ""
-    print(f"  keypoint {label}: error={err:.1f}px  (frame {frames_from_ref} from segment start){flag}")
-if max(errs) > 20:
+# being numerically unreliable -- verify it, don't just eyeball it. For lines,
+# the right check isn't point reprojection -- it's PERPENDICULAR DISTANCE of
+# each clicked point from the fitted line (project the known field edge into
+# image space via the fitted H, then measure how far each real click sits
+# from that line). Large distance means either a bad click, drift in frame
+# registration, or the lines don't have enough geometric diversity to
+# constrain the fit well (see the rank-deficiency note in
+# frisbee_analysis/calibration.py and results/calibration_finding.md).
+print("\nReprojection error per line (perpendicular distance of each clicked "
+      "point from the fitted line -- want this small, a few px):")
+all_errs = []
+for edge in edges:
+    vi, vj = edge
+    fx1, fy1 = cfg.vertices[vi - 1]
+    fx2, fy2 = cfg.vertices[vj - 1]
+    p1 = field_to_pixel(fx1, fy1, calib)
+    p2 = field_to_pixel(fx2, fy2, calib)
+    l = np.cross([p1[0], p1[1], 1.0], [p2[0], p2[1], 1.0])
+    l = l / np.hypot(l[0], l[1])
+    line_errs = [abs(l[0] * px + l[1] * py + l[2]) for px, py in lines[edge]]
+    all_errs.extend(line_errs)
+    flag = "  <-- HIGH" if max(line_errs) > 20 else ""
+    print(f"  {LINE_LABELS[edge]}: max={max(line_errs):.1f}px mean={np.mean(line_errs):.1f}px "
+          f"(over {len(line_errs)} points){flag}")
+if all_errs and max(all_errs) > 20:
     print("\nWARNING: high reprojection error means this calibration is NOT reliable yet.")
-    print("Likely causes: points too close to collinear (need more spread, not just more")
-    print("points), or drift in frame registration for points clicked far from the")
-    print("segment's reference frame (try a shorter duration_sec, or click keypoints on")
-    print("frames earlier in the browsing order). Re-run and add/replace points.")
+    print("Likely causes: lines too close to parallel/concurrent with each other (need more")
+    print("geometric diversity, not just more lines), or drift in frame registration for points")
+    print("clicked far from the segment's reference frame (try a shorter duration_sec, or click")
+    print("on frames earlier in the browsing order). Re-run and add/replace lines.")
 
 # sanity-check overlay on the segment's own reference frame (identity homography)
 ref_frame = frames[seg_idx[0]]

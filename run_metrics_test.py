@@ -129,7 +129,21 @@ for fi in seg_idx:
     frame = frames[fi]
     results = model.predict(frame, classes=[0], conf=0.25, imgsz=1920, verbose=False)[0]
     detections = sv.Detections.from_ultralytics(results)
-    detections = tracker.update_with_detections(detections)
+    # MEASURED BUG: sv.ByteTrack.update_with_detections DROPS any detection it
+    # can't confidently match to an already-existing track -- a first-seen (or
+    # re-appearing after being lost) player with score in [0.25, det_thresh)
+    # (det_thresh = track_activation_threshold + 0.1 = 0.35 by default) is
+    # discarded entirely, never even getting a track id (supervision 0.30.0
+    # core.py "Step 4: Init new stracks", `if track.score < self.det_thresh:
+    # continue`). Only the SPEED estimate actually needs a track id -- on-field
+    # counting and team classification don't. So: keep the RAW detections for
+    # counting/classification, and only consult `tracked` (a same-order
+    # SUBSET of the raw boxes) to look up a track id per box where one exists,
+    # for speed matching. This is what fixed a real undercount (was reporting
+    # 3 on-field players in a frame with 9 visible).
+    tracked = tracker.update_with_detections(detections)
+    track_id_by_box = {tuple(np.round(box, 3)): int(tid)
+                        for box, tid in zip(tracked.xyxy, tracked.tracker_id)}
 
     frame_to_field = calib.H() @ homography_by_idx[fi]
     frame_calib = Calibration(homography=frame_to_field.tolist(), keypoint_labels=[],
@@ -142,14 +156,16 @@ for fi in seg_idx:
     frame_track_map = {}
     n_a = n_b = 0
     vis = frame.copy() if fi == seg_idx[-1] else None
-    for box, tid, sat in zip(boxes, detections.tracker_id, sats):
+    for box, sat in zip(boxes, sats):
         x1, y1, x2, y2 = box
         foot_x, foot_y = (x1 + x2) / 2.0, y2
         fx, fy = pixel_to_field(foot_x, foot_y, frame_calib)
         if not is_in_field(foot_x, foot_y, frame_calib, cfg, margin_cm=100.0):
             continue
         team = "A" if sat < sat_thresh else "B"
-        frame_track_map[int(tid)] = (fx, fy, team)
+        tid = track_id_by_box.get(tuple(np.round(box, 3)))
+        if tid is not None:
+            frame_track_map[tid] = (fx, fy, team)
         if team == "A":
             n_a += 1
         else:
@@ -157,7 +173,8 @@ for fi in seg_idx:
         if vis is not None:
             color = (255, 100, 0) if team == "A" else (0, 0, 255)
             cv2.rectangle(vis, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-            cv2.putText(vis, f"#{tid}", (int(x1), int(y1) - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            label = f"#{tid}" if tid is not None else "?"
+            cv2.putText(vis, label, (int(x1), int(y1) - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
     on_field_counts["A"].append(n_a)
     on_field_counts["B"].append(n_b)
     per_frame_tracks.append(frame_track_map)

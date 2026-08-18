@@ -48,6 +48,37 @@ calibration in use predates `line_details` so its own reprojection error
 can't be re-checked, and there's no ground truth here to compare against
 (unlike Track A, which had UFATrack).
 
+## Addendum: ByteTrack was silently dropping most on-field detections (real bug, fixed)
+
+The person spot-checked the very first run against the actual frame and
+reported 3 detected out of 9 players visibly on the field — a much bigger
+gap than generic-detector recall would explain on its own.
+
+Root cause, found by reading `supervision` 0.30.0's `ByteTrack` source
+directly (`tracker/byte_tracker/core.py`): `update_with_detections` silently
+**drops** any detection it can't confidently match to an already-existing
+track. Concretely, a first-seen (or re-appearing-after-lost) player with YOLO
+confidence in `[track_activation_threshold, det_thresh)` — `[0.25, 0.35)` by
+default — never gets a track id at all ("Step 4: Init new stracks":
+`if track.score < self.det_thresh: continue`) and is discarded from the
+returned detections entirely, not just left untracked. The bug in
+`run_metrics_test.py`: on-field counting and team classification were reading
+the ByteTrack-*filtered* output, when only the speed estimate actually needs
+a track id.
+
+**Fix**: keep the raw YOLO detections for counting/classification/in-field
+filtering; only consult ByteTrack's output (a same-order subset of the raw
+boxes) to look up a track id per box where a match happens to exist, used
+solely for consecutive-frame speed matching. Same window, same frame:
+on-field counts went from **team A mean 0.5→6.6, team B mean 0.6→4.5** per
+frame — the last frame's visual count went from 3 boxed players to 11,
+matching the person's manual count of 9 (the extra 2 being genuine detections
+outside their count, not filter errors — two people clearly standing on the
+running track were still correctly excluded by `is_in_field`). Speed numbers
+were barely affected (still ~1.3–1.5 m/s, still only 8 usable samples) since
+that estimate was never reading the undercounted path — the bug was specific
+to counting/classification, not speed.
+
 ## Recommendation
 
 - Re-run calibration with the current `run_calibrate.py` (saves

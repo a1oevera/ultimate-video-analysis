@@ -97,6 +97,45 @@ heuristic, not a learned classifier — it assumes real players at any depth on
 this footage stay roughly proportionate to each other in the same frame,
 which held here but isn't guaranteed on a much wider zoom range.
 
+## Addendum 3: three more real bugs from a person spot-check (margin, saturation, occlusion)
+
+Another round of the same pattern: the person looked at the actual output
+and found three concrete problems, not noise.
+
+1. **Sideline/bench people counted as on-field.** `is_in_field`'s 100cm
+   outward margin (added earlier to be forgiving of foot-point/calibration
+   noise) was generous enough that people standing *near* the boundary, not
+   on it, got counted as players. Fixed: `margin_cm=0`.
+2. **Dark-jersey players tagged as the white team.** The classifier used HSV
+   *saturation*, on the assumption (from `results/team_classify_finding.md`)
+   that a white-vs-colored matchup splits cleanly on it. Measured directly
+   on a real frame: saturation ranged 1–56 with heavy overlap between teams
+   — a near-black/neutral dark jersey reads as low-saturation too, since a
+   deep, desaturated color isn't the same thing as a vivid one. HSV
+   *brightness* (value), on the same frame, split cleanly: 55–131 (dark) vs
+   219–255 (white), a real gap with nothing in between. Switched
+   classification to brightness. Also switched from a per-frame threshold to
+   one Otsu threshold pooled across the whole window, since a per-frame
+   split silently assumes each frame shows a ~50/50 mix of both teams.
+3. **Overlapping players cross-contaminating each other's team read.** The
+   occlusion-exclusion crop from Addendum 1/the ByteTrack fix had too loose
+   a floor (30% of torso width, no absolute minimum) — two heavily-
+   overlapping, near-duplicate detection boxes a few pixels apart reduced
+   each other's usable crop to a few-pixel sliver, caught by two supposed
+   detections of the same area returning wildly different brightness
+   values. Tightened the floor to 60%-of-width-or-6px, whichever is larger.
+
+Verified on the same real frame used throughout this doc: every dark-jersey
+player now boxes red, the white-jersey player boxes blue, matching what's
+actually visible.
+
+**Pattern worth naming**: every real bug found in this pipeline so far
+(ByteTrack drop, the cone false positive, and these three) was found by a
+person looking at the actual saved image, not by the printed summary
+numbers looking wrong. The numbers looked *plausible* every single time
+before the fix. Keep treating the visual spot-check as load-bearing, not
+optional, before trusting an aggregate from this pipeline.
+
 ## Recommendation
 
 - Re-run calibration with the current `run_calibrate.py` (saves

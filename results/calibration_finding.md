@@ -271,6 +271,47 @@ one wins, symmetric to the normal merge). Verified: canvas's stored error
 correctly updated 12.8px -> 6.5px, and a fresh `run_calibrate_auto.py` run
 now reports 6.5px, not the stale 12.8px.
 
+## Addendum 4.7: a false-positive bank match corrupted the shared canvas
+
+Working through the batch calibration list, person reported the second
+auto-match "very wrong." Investigated: it had matched bank canvas_000 with
+only **17 RANSAC inliers and 15% coverage** -- barely above the OLD
+`min_inliers=15` floor. Re-running the identical command produced a
+visibly different result (different dot positions) -- a real match doesn't
+wobble between reruns of the same input; a coincidental one does. The two
+frames were 26 minutes apart in the game.
+
+**Worse than a one-off bad calibration**: `run_calibrate_auto.py` always
+calls `add_entry` at the end regardless of match quality, so this
+false-positive got MERGED into the shared canvas -- confirmed visually
+(`outputs/debug_canvas_corrupted.jpg`, not committed): two badly mismatched
+framings warped together, skewed background, different scoreboard scores
+composited on top of each other. This corrupted canvas_000 for EVERY future
+match, including the previously-verified good one -- re-testing t=1470
+against the corrupted canvas returned "no match" even though it had 2,354+
+inliers against the clean version.
+
+**Root cause**: `min_inliers=15` (`MosaicConfig`'s default) was validated
+for a different job entirely -- `mosaic.py`'s within-segment frame-to-frame
+chaining, where consecutive frames share most of their background. It's far
+too permissive for bank matching, which compares potentially unrelated
+moments anywhere in the game. Known GOOD bank matches in this project
+measured 1,800-2,500+ inliers and 55-63% coverage -- a huge gap above the
+old floor.
+
+**Fix**: `BANK_MIN_INLIERS = 50` and `BANK_MIN_COVERAGE = 0.25`, a much
+stricter bank-specific gate applied everywhere a bank match gets accepted --
+`try_auto_calibrate` (read-only matching) AND both matching loops inside
+`add_entry` (which can actually corrupt a canvas if wrong, so needs to be at
+least as strict). Grounded in the one real false-positive data point plus
+the cluster of known-good ones, not exhaustively tuned.
+
+**Recovery**: rebuilt the bank from scratch, re-seeded from the current
+verified-good calibration (2.1px reprojection error). Verified: the same
+false-positive timestamp now correctly falls back to manual instead of
+matching, and the good match still works (2,354 inliers, 63% coverage) on
+the clean bank.
+
 ## Addendum 5: the calibration bank -- reuse instead of re-detect
 
 Prompted by the person's own observation: this footage cuts/pans often

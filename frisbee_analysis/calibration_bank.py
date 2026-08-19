@@ -40,8 +40,23 @@ from __future__ import annotations
 import os
 import cv2
 import numpy as np
-from .mosaic import MosaicConfig, register_pair, register_pair_with_coverage
+from .mosaic import MosaicConfig, register_pair_with_coverage
 from .calibration import Calibration
+
+# MEASURED FALSE POSITIVE (person caught it: an auto-match landed on a frame
+# 26 minutes away from the canvas it "matched," visibly wrong, and the match
+# wobbled between reruns of the identical command -- a sign of a coincidental
+# match, not a real one). It cleared cfg.min_inliers (15) with just 17
+# inliers and 15% coverage -- that threshold was validated for a DIFFERENT
+# job (mosaic.py's within-segment frame-to-frame chaining, where consecutive
+# frames share most of their background) and is far too permissive for
+# matching across arbitrary, possibly-unrelated moments in the game. Known
+# GOOD bank matches in this project measured 1,800-2,500+ inliers and 55-58%
+# coverage -- a huge gap above these floors. Grounded in that one real data
+# point, not exhaustively tuned; revisit if a genuine match ever gets
+# rejected by this gate.
+BANK_MIN_INLIERS = 50
+BANK_MIN_COVERAGE = 0.25
 
 
 def _canvas_dirs(bank_dir):
@@ -120,7 +135,7 @@ def try_auto_calibrate(new_ref_frame: np.ndarray, bank_dir: str, mosaic_cfg: Mos
         # H_step maps new_ref_frame's pixels -> canvas's coords (register_pair's
         # convention: homography maps the SECOND arg's coords -> the FIRST arg's)
         H_step, n_inliers, coverage = register_pair_with_coverage(canvas_image, new_ref_frame, mosaic_cfg)
-        if H_step is None or n_inliers < mosaic_cfg.min_inliers or n_inliers <= best[2]:
+        if H_step is None or n_inliers < BANK_MIN_INLIERS or coverage < BANK_MIN_COVERAGE or n_inliers <= best[2]:
             continue
         new_H = canvas_calib.H() @ H_step
         new_calib = Calibration(homography=new_H.tolist(), keypoint_labels=canvas_calib.keypoint_labels,
@@ -198,8 +213,14 @@ def add_entry(bank_dir: str, ref_frame: np.ndarray, calib: Calibration,
         if loaded is None:
             continue
         canvas_image, canvas_mask, canvas_calib = loaded
-        H_step, n_inliers = register_pair(canvas_image, ref_frame, mosaic_cfg)
-        if H_step is not None and n_inliers >= mosaic_cfg.min_inliers and n_inliers > best_n:
+        # same stricter bank-specific gate as try_auto_calibrate (see
+        # BANK_MIN_INLIERS/BANK_MIN_COVERAGE above) -- a weak/coincidental
+        # match merged into a canvas would corrupt it for every FUTURE match
+        # too, not just this one, so this loop needs to be at least as
+        # strict as the read-only matching path, not looser.
+        H_step, n_inliers, coverage = register_pair_with_coverage(canvas_image, ref_frame, mosaic_cfg)
+        if (H_step is not None and n_inliers >= BANK_MIN_INLIERS
+                and coverage >= BANK_MIN_COVERAGE and n_inliers > best_n):
             best_dir, best_H, best_n = canvas_dir, H_step, n_inliers
 
     if best_dir is not None:
@@ -224,8 +245,10 @@ def add_entry(bank_dir: str, ref_frame: np.ndarray, calib: Calibration,
             # OLD canvas's accumulated content INTO ref_frame's coordinate
             # system instead -- symmetric to the normal path below, just
             # with the roles of "base" and "merged in" swapped.
-            H_reverse, n_inliers_reverse = register_pair(ref_frame, canvas_image, mosaic_cfg)
-            if H_reverse is not None and n_inliers_reverse >= mosaic_cfg.min_inliers:
+            H_reverse, n_inliers_reverse, coverage_reverse = register_pair_with_coverage(
+                ref_frame, canvas_image, mosaic_cfg)
+            if (H_reverse is not None and n_inliers_reverse >= BANK_MIN_INLIERS
+                    and coverage_reverse >= BANK_MIN_COVERAGE):
                 base_mask = np.full(ref_frame.shape[:2], 255, dtype=np.uint8)
                 grown_image, grown_mask, grown_calib = _grow_and_composite(
                     ref_frame, base_mask, calib, canvas_image, H_reverse)

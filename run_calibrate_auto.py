@@ -108,11 +108,16 @@ if calib is None:
 print(f"\nMatched bank entry '{matched_name}' with {n_inliers} RANSAC inliers, "
       f"{coverage*100:.0f}% frame coverage -- calibration composed automatically, "
       f"NO manual clicking needed.")
-if coverage < 0.15:
-    print(f"  NOTE: low coverage ({coverage*100:.0f}%) -- the matched keypoints were clustered "
-          f"in a small part of the frame, which risks drift when the fit is extrapolated to "
-          f"project something far from that cluster (e.g. a sideline). Check the overlay extra "
-          f"carefully.")
+if coverage < 0.4:
+    # MEASURED FALSE POSITIVE (person caught a match 26 minutes away from its
+    # canvas, visibly wrong, that had barely cleared the OLD threshold --
+    # calibration_bank.py's BANK_MIN_INLIERS/BANK_MIN_COVERAGE now hard-reject
+    # anything that weak before it even reaches here. This is just a softer
+    # heads-up band above that floor, not the last line of defense anymore.
+    print(f"  NOTE: coverage ({coverage*100:.0f}%) is only just above the bank's minimum -- "
+          f"the matched keypoints were somewhat clustered, which risks drift when the fit is "
+          f"extrapolated to project something far from that cluster (e.g. a sideline). Check "
+          f"the overlay extra carefully.")
 # MEASURED (person caught visible drift in an auto-matched overlay -- see
 # calibration_bank.py's try_auto_calibrate docstring): the underlying manual
 # calibration this bank canvas was built from can itself have real

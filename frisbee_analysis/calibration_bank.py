@@ -41,7 +41,9 @@ import os
 import cv2
 import numpy as np
 from .mosaic import MosaicConfig, register_pair_with_coverage
-from .calibration import Calibration
+from .calibration import (Calibration, vertices_within_bounds,
+                          calibration_covers_evidence)
+from .field_lines import projected_field_is_sane
 
 # MEASURED FALSE POSITIVE (person caught it: an auto-match landed on a frame
 # 26 minutes away from the canvas it "matched," visibly wrong, and the match
@@ -132,6 +134,20 @@ def try_auto_calibrate(new_ref_frame: np.ndarray, bank_dir: str, mosaic_cfg: Mos
         if loaded is None:
             continue
         canvas_image, _, canvas_calib = loaded
+        # NEVER serve a canvas whose own calibration is invalid where its
+        # evidence lives. MEASURED: canvas_004 is usable to only 27.9m of a
+        # 100m field and fails calibration_covers_evidence -- matching against
+        # it composes that defect into every result, silently, because
+        # composition only multiplies homographies (see
+        # results/field_lines_finding.md 3.14). A LOCAL canvas is fine and is
+        # deliberately still served; a broken one is not.
+        if not calibration_covers_evidence(
+                canvas_calib,
+                [p for e in (canvas_calib.line_details or []) for p in e["points"]]
+                or canvas_calib.image_points):
+            print(f"  skipping bank canvas {os.path.basename(canvas_dir)}: its own calibration "
+                  f"is not valid where its evidence is -- re-do it with run_calibrate.py")
+            continue
         # H_step maps new_ref_frame's pixels -> canvas's coords (register_pair's
         # convention: homography maps the SECOND arg's coords -> the FIRST arg's)
         H_step, n_inliers, coverage = register_pair_with_coverage(canvas_image, new_ref_frame, mosaic_cfg)
@@ -235,11 +251,48 @@ def add_entry(bank_dir: str, ref_frame: np.ndarray, calib: Calibration,
         # only keep the existing canvas's when the incoming one has no known
         # error to compare against (don't downgrade a verified canvas for
         # an unverified one).
-        incoming_better = (
-            calib.source_max_reprojection_px is not None and
-            (canvas_calib.source_max_reprojection_px is None or
-             calib.source_max_reprojection_px < canvas_calib.source_max_reprojection_px)
-        )
+        #
+        # MEASURED WRONG, SECOND TIME (torovcanyon.mp4, t=3945s): this exact
+        # comparison re-broke the fix above. A calibration with a low-spread
+        # sideline click had source_max_reprojection_px=0.0036 (near-perfect
+        # by this metric) while its far corner projected 500,000+ px outside
+        # the frame; the REDONE, actually-correct calibration had a higher
+        # (but real) error of 2.74px and lost the comparison, so the bank
+        # kept serving the broken one. Reprojection error only validates
+        # points against the line already fit through them -- it can't see
+        # an unconstrained vertex blowing up. Check plausibility (all field
+        # vertices land somewhere sane) FIRST; only compare raw reprojection
+        # numbers between two calibrations that are both already plausible.
+        #
+        # MEASURED WRONG, THIRD TIME (torovcanyon.mp4 t=3945-4005s, found by
+        # run_field_lines_test.py): "plausible" meant only
+        # vertices_within_bounds, which a BOWTIE passes -- all its vertices
+        # are in bounds, just in an impossible order. The calibration behind
+        # canvas_002 scored 2.74px with every vertex in bounds and still
+        # folded the field over on itself -- one of its four line labels is
+        # geometrically inconsistent with the rest. A calibration whose projected field isn't even a valid
+        # quadrilateral is not "the plausible one" no matter what its
+        # reprojection number says, so both checks now gate plausibility.
+        # `field_in_front_of_camera` is the strongest of the three and the only
+        # one that caught canvas_002 (see results/field_lines_finding.md): a
+        # calibration whose horizon cuts through the field is never "the
+        # plausible one", whatever its reprojection number says.
+        canvas_sane = (vertices_within_bounds(canvas_calib, canvas_image.shape[1], canvas_image.shape[0])
+                       and projected_field_is_sane(canvas_calib)
+                       and calibration_covers_evidence(canvas_calib, canvas_calib.image_points))
+        incoming_sane = (vertices_within_bounds(calib, ref_frame.shape[1], ref_frame.shape[0])
+                         and projected_field_is_sane(calib)
+                         and calibration_covers_evidence(
+                             calib, [p for e in (calib.line_details or []) for p in e["points"]]
+                                    or calib.image_points))
+        if incoming_sane != canvas_sane:
+            incoming_better = incoming_sane
+        else:
+            incoming_better = (
+                calib.source_max_reprojection_px is not None and
+                (canvas_calib.source_max_reprojection_px is None or
+                 calib.source_max_reprojection_px < canvas_calib.source_max_reprojection_px)
+            )
         if incoming_better:
             # re-base the canvas on the NEW (better) calibration: warp the
             # OLD canvas's accumulated content INTO ref_frame's coordinate

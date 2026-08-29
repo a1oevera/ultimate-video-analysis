@@ -26,12 +26,15 @@ Run:  python run_calibrate_auto.py <video_path> [start_sec] [duration_sec] [samp
 Needs opencv-python (Track B deps). No GUI/display needed -- unlike
 run_calibrate.py, this can run headlessly.
 """
+import os
 import sys
 import cv2
 import numpy as np
 from frisbee_analysis import UltimatePitchConfiguration, MosaicConfig, register_sequence
-from frisbee_analysis.calibration import draw_field_overlay
+from frisbee_analysis.calibration import (Calibration, draw_field_overlay,
+                                          evidence_spans)
 from frisbee_analysis.calibration_bank import try_auto_calibrate, add_entry as add_bank_entry
+from frisbee_analysis.video_overlays import overlay_boxes_for
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/videoplayback.mp4"
 start_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 1158.0
@@ -46,12 +49,7 @@ if not cap.isOpened():
     sys.exit(f"could not open {video_path}")
 _frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 _frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-if (_frame_w, _frame_h) == (1920, 1080):
-    OVERLAY_BOXES = [(0, 0, 1920, 230), (0, 860, 1920, 950)]
-elif (_frame_w, _frame_h) == (640, 360):
-    OVERLAY_BOXES = [(0, 295, 640, 360)]
-else:
-    OVERLAY_BOXES = []
+OVERLAY_BOXES = overlay_boxes_for(video_path, _frame_w, _frame_h)
 
 video_fps = cap.get(cv2.CAP_PROP_FPS)
 step = max(1, int(round(video_fps / sample_fps)))
@@ -128,11 +126,41 @@ if calib.source_max_reprojection_px is not None:
     print(f"  NOTE: the calibration this canvas was built from had up to "
           f"{calib.source_max_reprojection_px:.1f}px reprojection error of its own -- "
           f"that carries through to this auto-match too, on top of anything from this match step.")
+# MEASURED (results/field_lines_finding.md): a bank canvas can hold a
+# calibration that is geometrically impossible -- canvas_002's folded the
+# field into a bowtie -- and an auto-match against it inherits that exactly,
+# silently, since composition only multiplies homographies. The check is
+# cheap and the failure is invisible on a cropped overlay, so run it here on
+# every match rather than trusting whatever went into the bank.
+from frisbee_analysis.field_lines import projected_field_is_sane
+from frisbee_analysis.calibration import field_in_front_of_camera
+if not field_in_front_of_camera(calib):
+    print(f"\n  *** WARNING: this auto-matched calibration puts part of the field BEHIND the "
+          f"camera -- the horizon cuts through the playing surface. The bank canvas it came "
+          f"from ('{matched_name}') is broken, so every match against it is broken the same "
+          f"way. Re-do that canvas's manual calibration. ***")
+if not projected_field_is_sane(calib):
+    print(f"\n  *** WARNING: this auto-matched calibration projects the field as a "
+          f"self-intersecting or inside-out shape. The MATCH may be fine -- the fault is "
+          f"almost certainly in the bank canvas's own calibration ('{matched_name}'), which "
+          f"means every match against that canvas is wrong the same way. Re-do that canvas's "
+          f"manual calibration with run_calibrate.py before using this. ***")
+
 calib.save(out_path)
 print(f"Saved calibration to {out_path}")
 
 cfg = UltimatePitchConfiguration()
-overlay = draw_field_overlay(ref_frame, calib, cfg)
+# a composed calibration has no clicks of its own, but the canvas it matched
+# against does, and evidence spans are field-space -- so the overlay can still
+# show which parts of the outline are measured and which are extrapolated
+# (otherwise every auto-matched overlay draws as all-guess, which is a
+# DIFFERENT wrong claim from the old all-solid one)
+try:
+    source_spans = evidence_spans(Calibration.load(
+        os.path.join(bank_dir, matched_name, "calibration.json")), cfg)
+except Exception:
+    source_spans = None
+overlay = draw_field_overlay(ref_frame, calib, cfg, spans=source_spans)
 overlay_path = out_path.rsplit(".", 1)[0] + "_overlay.jpg"
 cv2.imwrite(overlay_path, overlay)
 print(f"Saved sanity-check overlay to {overlay_path} -- CHECK THIS BY EYE before trusting "

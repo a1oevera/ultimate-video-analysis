@@ -28,6 +28,7 @@ import sys
 import time
 import cv2
 from frisbee_analysis import MosaicConfig, register_pair, looks_like_field_view
+from frisbee_analysis.video_overlays import overlay_boxes_for
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/videoplayback.mp4"
 sample_every_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 5.0
@@ -47,12 +48,7 @@ if start_s > 0:
     cap.set(cv2.CAP_PROP_POS_FRAMES, int(start_s * fps))
 
 _w, _h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-if (_w, _h) == (1920, 1080):
-    OVERLAY_BOXES = [(0, 0, 1920, 230), (0, 860, 1920, 950)]
-elif (_w, _h) == (640, 360):
-    OVERLAY_BOXES = [(0, 295, 640, 360)]
-else:
-    OVERLAY_BOXES = []
+OVERLAY_BOXES = overlay_boxes_for(video_path, _w, _h)
 cfg = MosaicConfig(overlay_mask_boxes=tuple(OVERLAY_BOXES))
 
 step_frames = max(1, int(round(sample_every_sec * fps)))

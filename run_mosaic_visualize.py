@@ -10,6 +10,7 @@ import sys
 import cv2
 import numpy as np
 from frisbee_analysis import MosaicConfig, register_sequence, interpolate_missing
+from frisbee_analysis.video_overlays import overlay_boxes_for
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/ojuc.mp4"
 out_path = sys.argv[2] if len(sys.argv) > 2 else "mosaic.jpg"
@@ -25,20 +26,10 @@ if not cap.isOpened():
 # (see results/calibration_finding.md): a hardcoded-for-one-video overlay box
 # silently does the wrong thing (or nothing) against a different video's
 # resolution, and can corrupt registration by leaving a real overlay unmasked.
-# Full-width top band for ojuc.mp4: a second, larger semi-transparent
-# "ROGERS tv" watermark shows up intermittently higher up and wider than the
-# crisp corner logo -- a small box missed it. y=230 stays above the treeline
-# in that footage's wide shots.
+# Now keyed by filename, see frisbee_analysis/video_overlays.py.
 _frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 _frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-if (_frame_w, _frame_h) == (1920, 1080):
-    OVERLAY_BOXES = [(0, 0, 1920, 230), (0, 860, 1920, 950)]  # ojuc.mp4: top band, captions band
-elif (_frame_w, _frame_h) == (640, 360):
-    OVERLAY_BOXES = [(0, 295, 640, 360)]  # videoplayback.mp4: UFA score bug + ticker, bottom band
-else:
-    OVERLAY_BOXES = []
-    print(f"WARNING: no known overlay mask for {_frame_w}x{_frame_h} -- add one if this "
-          f"video has a static broadcast graphic, or registration may be corrupted by it.")
+OVERLAY_BOXES = overlay_boxes_for(video_path, _frame_w, _frame_h)
 
 video_fps = cap.get(cv2.CAP_PROP_FPS)
 step = int(round(video_fps / sample_fps))

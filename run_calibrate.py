@@ -35,6 +35,17 @@ field boundary as the game actually being broadcast -- a line from the wrong
 field's geometry will fit a homography that looks superficially valid but is
 nonsense. See results/calibration_finding.md.
 
+*** CHAIN-DEPTH WARNING: *** MEASURED (torovcanyon.mp4, t=3900s session):
+a frame 48 steps into the segment's registration chain produced a point
+14,505px off-canvas, despite that specific step's own coverage being
+healthy (0.35, well above MosaicConfig.min_coverage). Per-step quality
+gating can't catch this -- each of the 48 chained homographies
+(frame_to_frame @ frame_to_frame @ ...) can look individually fine while
+still compounding into real drift by the far end of a long chain. The
+on-screen "frame N/M in segment" counter now turns orange/red as N grows --
+prefer a LOWER-numbered frame for a line if it's visible on one, especially
+for near-camera lines that tend to only show up deep in a pan.
+
 NEEDS A REAL DISPLAY -- run this in your own terminal, not headless. Opens a
 GUI window. Recomputes registration for the given window on startup (same
 cost as run_mosaic_test.py) before you can start clicking.
@@ -65,8 +76,13 @@ import cv2
 import numpy as np
 from frisbee_analysis import UltimatePitchConfiguration, MosaicConfig, register_sequence
 from frisbee_analysis.calibration import (fit_calibration_with_lines, draw_field_overlay,
-                                          field_to_pixel, check_line_reprojection_error)
+                                          field_to_pixel, check_line_reprojection_error,
+                                          vertices_within_bounds, field_in_front_of_camera,
+                                          field_covers_points, field_validity_region,
+                                          calibration_covers_evidence)
+from frisbee_analysis.field_lines import projected_field_is_sane
 from frisbee_analysis.calibration_bank import add_entry as add_bank_entry
+from frisbee_analysis.video_overlays import overlay_boxes_for
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/ojuc.mp4"
 start_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 1580.0
@@ -79,22 +95,14 @@ if not cap.isOpened():
     sys.exit(f"could not open {video_path}")
 
 # Static broadcast overlay position depends on the source video -- MEASURED BUG
-# (see results/calibration_finding.md): this used to be hardcoded for the
-# 1920x1080 "ojuc.mp4" video's overlay position regardless of which video was
-# actually loaded. Against the 640x360 UFA video that masked the top 64% of
-# every frame (real field content, wasted) while completely missing the
-# actual score bug at the bottom (never masked, corrupting registration --
-# most likely cause of the segment-selection weirdness this was chasing).
+# (see results/calibration_finding.md): this used to be keyed off frame
+# resolution alone, which broke the moment two different videos shared a
+# resolution with different overlay layouts (torovcanyon.mp4 is also
+# 1920x1080 but has nothing like ojuc.mp4's overlay). Now keyed by filename,
+# see frisbee_analysis/video_overlays.py.
 _frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 _frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-if (_frame_w, _frame_h) == (1920, 1080):
-    OVERLAY_BOXES = [(0, 0, 1920, 230), (0, 860, 1920, 950)]  # ojuc.mp4: top scoreboard band, captions band
-elif (_frame_w, _frame_h) == (640, 360):
-    OVERLAY_BOXES = [(0, 295, 640, 360)]  # videoplayback.mp4: UFA score bug + ticker, bottom band
-else:
-    OVERLAY_BOXES = []
-    print(f"WARNING: no known overlay mask for {_frame_w}x{_frame_h} -- add one to run_calibrate.py "
-          f"if this video has a static broadcast graphic, or registration may be corrupted by it.")
+OVERLAY_BOXES = overlay_boxes_for(video_path, _frame_w, _frame_h)
 
 video_fps = cap.get(cv2.CAP_PROP_FPS)
 step = max(1, int(round(video_fps / sample_fps)))
@@ -160,17 +168,30 @@ print(f"Using segment {best_seg}: {len(seg_idx)} frames to browse "
       f"(t={int(t0//60)}:{t0%60:05.2f} - {int(t1//60)}:{t1%60:05.2f})")
 
 cfg = UltimatePitchConfiguration()
+# MEASURED (torovcanyon.mp4): "near/far" for the GOAL and BACK lines used to
+# claim camera distance ("very close to camera") -- that's only true for a
+# camera mounted at one endzone looking down the field's length (ojuc.mp4,
+# videoplayback.mp4). This footage's camera sits at mid-SIDELINE looking
+# across the width instead, where both endzones sit roughly equally far away,
+# just on opposite sides of frame -- "near"/"far" for goal/back lines was
+# actively misleading there. Sidelines keep near/far (that one's still real:
+# whichever sideline the camera happens to stand next to IS physically
+# closer, regardless of mount style). Goal/back lines are now just "A"/"B" --
+# an arbitrary pick with ONE hard rule: goal line A and back line A MUST be
+# the same physical endzone as each other (they share vertices 3,4 and 1,2 in
+# UltimatePitchConfiguration), likewise B with vertices 5,6 and 7,8. Camera
+# distance has nothing to do with which one you call A.
 LINE_LABELS = {
-    (1, 7): "near sideline (left side of field, closest to camera)",
-    (2, 8): "far sideline (right side of field)",
-    (3, 4): "near goal line",
-    (5, 6): "far goal line",
-    (1, 2): "near back line (very close to camera -- often off-camera)",
-    (7, 8): "far back line",
+    (1, 7): "near sideline (whichever one the camera is physically closest to)",
+    (2, 8): "far sideline (the other one)",
+    (3, 4): "goal line, END A",
+    (5, 6): "goal line, END B (the other end from A)",
+    (1, 2): "back line, END A (SAME end as 'goal line, END A' -- often off-camera regardless of mount)",
+    (7, 8): "back line, END B (SAME end as 'goal line, END B')",
 }
 # Sidelines + goal lines first: long lines, measured most likely to actually
-# be visible/painted. Back lines last -- short, near-camera ones are often
-# out of frame. See results/calibration_finding.md.
+# be visible/painted. Back lines last -- short lines, often out of frame
+# regardless of camera mount. See results/calibration_finding.md.
 order = [(1, 7), (2, 8), (3, 4), (5, 6), (1, 2), (7, 8)]
 
 browse_pos = [0]     # index into seg_idx
@@ -198,6 +219,22 @@ def redraw():
     cv2.putText(vis, f"VIDEO TIME: {int(abs_t // 60)}:{abs_t % 60:05.2f}  "
                       f"(frame {browse_pos[0] + 1}/{len(seg_idx)} in segment)",
                 (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+    # CHAIN-DEPTH WARNING -- MEASURED (see module docstring): a frame far into
+    # the segment's registration chain can still have a badly-drifted composed
+    # homography even when ITS OWN step's coverage/inliers look fine, since
+    # drift compounds across many chained steps in a way no single-step check
+    # catches. browse_pos[0] is this frame's position within the segment's own
+    # ok-frame sequence -- a direct proxy for chain depth. Prefer clicking a
+    # line on the lowest-numbered frame it's visible on.
+    depth = browse_pos[0]
+    if depth >= 30:
+        depth_color, depth_msg = (0, 0, 255), "HIGH DRIFT RISK -- prefer an earlier frame for this line if possible"
+    elif depth >= 15:
+        depth_color, depth_msg = (0, 140, 255), "rising drift risk -- an earlier frame is safer if the line is visible there"
+    else:
+        depth_color, depth_msg = (0, 200, 0), "low drift risk (close to segment start)"
+    cv2.putText(vis, f"CHAIN DEPTH: {depth} steps from segment start -- {depth_msg}",
+                (10, vis.shape[0] - 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, depth_color, 2)
     cv2.putText(vis, "n/p=browse  click=add point  SPACE=finish line  s=skip line  u=undo  q=finish",
                 (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     cv2.putText(vis, f"lines done: {len(lines)}  (need >= 4)", (10, 110),
@@ -275,6 +312,25 @@ times = [frame_abs_sec[fi] for fi in all_frame_indices]
 print("Lines clicked: " + ", ".join(f"{LINE_LABELS[e]} ({len(lines[e])} pts)" for e in edges))
 print(f"  (time spread across all clicks: {max(times) - min(times):.1f}s -- wider spread means more "
       f"homography-chaining drift risk, see results/calibration_finding.md)")
+
+# MEASURED (results/calibration_finding.md, torovcanyon.mp4 t=3945s session): a
+# line's reprojection error can be perfect (its points are self-consistent with
+# their OWN fitted line) while the line was still barely constrained -- two
+# points 261px apart on a sideline that spans the WHOLE field length gave near-
+# zero reprojection error yet let the far corner extrapolate to 500,000+ pixels
+# away. Reprojection error can't catch this; it only checks consistency with
+# the line already fitted, not whether that line had enough spread to BE fit
+# well in the first place. Flag it here, before the fit even runs.
+print("\nPoint spread per line (max pixel distance between a line's own points -- "
+      "want this LARGE, especially for the sidelines which span the full field "
+      "length: two points clustered close together barely constrain that line's "
+      "direction/vanishing point, even if they later look perfectly consistent):")
+for e in edges:
+    pts = lines[e]
+    spread = max((((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                  for (ax, ay) in pts for (bx, by) in pts), default=0.0)
+    flag = "  <-- LOW SPREAD -- consider re-clicking farther apart along this line" if spread < 400 else ""
+    print(f"  {LINE_LABELS[e]}: {spread:.0f}px{flag}")
 calib = fit_calibration_with_lines([], [], f"{video_path} t={start_sec:.0f}-{start_sec + duration_sec:.0f}s",
                                     line_image_points=line_image_points, line_field_edges=edges,
                                     cfg=cfg, source_frame_indices=all_frame_indices,
@@ -336,12 +392,121 @@ print("reprojection error above too (see results/calibration_finding.md).")
 # again (see frisbee_analysis/calibration_bank.py). Skip if the reprojection
 # error was flagged HIGH above -- don't propagate a bad calibration to future
 # auto-matches just because it was already computed.
+#
+# MEASURED GAP (torovcanyon.mp4, t=3945s): reprojection error alone missed a
+# calibration whose far corner projected 500,000+ px off-canvas, because that
+# corner was never directly clicked -- reprojection error only checks clicked
+# points against their own fitted line. Check plausibility too: every field
+# vertex, clicked or not, should land somewhere sane relative to this frame.
+sane = vertices_within_bounds(calib, ref_frame.shape[1], ref_frame.shape[0])
+
+# MEASURED GAP, SECOND ONE (torovcanyon.mp4 t=3945-4005s, found by
+# run_field_lines_test.py -- see results/field_lines_finding.md): the
+# calibration that produced bank canvas_002 passed BOTH checks above (2.74px
+# worst-line reprojection error, every vertex within bounds) and was still
+# wrong. Its "left sideline" -- a line that runs the full 100m of the field --
+# had been clicked on a 400px stub of PLAIN UNMARKED TURF in the bottom-left
+# corner, at 40 degrees to the other sideline's 5.6. The fit reproduced those
+# clicks beautifully (that is all reprojection error measures) and folded the
+# field into a bowtie: vertex 7 landed at (-1017,-157) while vertex 8, its
+# partner on the same back line, landed at (8050,1076).
+#
+# Neither existing check can see that. Reprojection error only compares
+# clicked points to the line fitted through those same points, and
+# vertices_within_bounds only asks whether each vertex lands somewhere in a
+# generous box -- a bowtie's vertices are all perfectly "in bounds", just in
+# the wrong ORDER. projected_field_is_sane checks the shape itself.
+field_shape_ok = projected_field_is_sane(calib, cfg)
+
+# MEASURED, and softened from a veto (see results/field_lines_finding.md):
+# a calibration fitted from evidence at ONE END of a field is not wrong, it is
+# LOCAL. canvas_002 fails field_in_front_of_camera and is still the most
+# accurate calibration available for this footage -- round-tripping a grid of
+# field points through it gives 1 image pixel = 0.01-0.04 m on the ground
+# everywhere the camera can actually see. Its horizon simply falls ACROSS the
+# field (vanishing at x=64.4m along one sideline, x=117.5m along the other),
+# so the far corners land on opposite sides of it. Rejecting it threw away a
+# good measurement of the near half.
+#
+# What actually disqualifies a calibration is being invalid where its OWN
+# evidence lives -- then nothing it says is supported by anything.
+_validity = field_validity_region(calib, cfg)
+in_front = field_in_front_of_camera(calib, cfg)
+_all_click_points = [p for entry in (calib.line_details or []) for p in entry["points"]]
+covers_evidence = calibration_covers_evidence(calib, _all_click_points, cfg)
+if not _validity["whole_field_usable"]:
+    print(f"\nNOTE: this calibration is LOCAL. It is usable out to x="
+          f"{_validity['usable_x_max']/100:.1f}m of the {cfg.length/100:.0f}m field "
+          f"({_validity['usable_fraction']*100:.0f}%); beyond that the field passes the "
+          f"horizon and nothing it projects there means anything. That is normal for a "
+          f"shot that only ever framed one end -- use it for the near half, and calibrate "
+          f"a second window for the far half.")
+
+# A fit is supposed to explain its own evidence: the clicked pixels should
+# land inside the field it produces. Catches the COLLAPSE mode --
+# vertices_within_bounds only catches explosion.
+covers_clicks = field_covers_points(calib, _all_click_points, cfg)
+
+# ONE FRAME PER CALIBRATION. The mosaic exists to pool DETECTIONS across a
+# pan; it is not a place to source CORRESPONDENCES from. Clicks chained
+# through different frames' homographies carry that chain's error into the
+# fit, and results/calibration_finding.md Addendum 4.6 already measured a
+# redo getting WORSE that way (points from 4 frames spread 1465px apart).
+# HONESTY NOTE: on the canvas_002 window this was re-measured and chaining
+# was NOT the culprit -- frame 12's chained vs directly-registered
+# homography diverge by only 1.3-2.9px across the top of the frame, and
+# re-deriving that line directly moved its angle by 0.02 degrees. So this
+# rule is policy, not the explanation for that particular failure. It stays
+# because a correspondence set should not depend on registration quality at
+# all when it doesn't have to.
+_click_frames = sorted({fi for entry in (calib.line_details or [])
+                        for fi in (entry.get("frame_indices") or [])})
+single_frame = len(_click_frames) <= 1
+
 bank_dir = "outputs/calibration_bank"
-if all_errs and max(all_errs) > 20:
+if not covers_evidence:
+    print(f"\nNOT added to the calibration bank ({bank_dir}) -- this calibration is not even "
+          f"valid where its own clicks are: they fall outside the region it can represent "
+          f"(usable only to x={_validity['usable_x_max']/100:.1f}m). That is different from "
+          f"being merely LOCAL -- it means nothing the fit says is supported by the evidence "
+          f"it was given. Re-do the calibration.")
+elif not covers_clicks:
+    print(f"\nNOT added to the calibration bank ({bank_dir}) -- the fitted field doesn't "
+          f"contain the pixels you clicked. The homography satisfies your line equations while "
+          f"putting the actual 100m x 37m field somewhere your clicks never were, which means "
+          f"it has explained nothing. Usually a labelling that collapses the field toward the "
+          f"horizon. Re-do the calibration.")
+elif not field_shape_ok:
+    print(f"\nNOT added to the calibration bank ({bank_dir}) -- the fitted field is not a "
+          f"sensible shape: its four corners project to a self-intersecting (bowtie) or "
+          f"inside-out quadrilateral, or the goal lines don\'t fall between the back lines. "
+          f"This happens when one line is MISIDENTIFIED -- the clicks can all sit on real "
+          f"paint and still describe an impossible field, which the reprojection error above "
+          f"CANNOT detect (it only checks your clicks against each other). Re-do the "
+          f"calibration and check each line\'s IDENTITY, not just that you clicked on a "
+          f"marking: on a multi-sport field the ultimate sidelines and goal lines share the "
+          f"surface with soccer/lacrosse paint of several colours. Skip a line you are not "
+          f"sure of rather than guessing.")
+elif not sane:
+    print(f"\nNOT added to the calibration bank ({bank_dir}) -- at least one field vertex "
+          f"projects way outside this frame (see vertices_within_bounds), even though the "
+          f"clicked-line reprojection error above may look fine. Likely a line with too "
+          f"little spread between its own points to constrain the field far from it -- "
+          f"re-click with points spread farther apart along the affected line.")
+elif all_errs and max(all_errs) > 20:
     print(f"\nNOT added to the calibration bank ({bank_dir}) -- reprojection error was HIGH, "
           f"see the warning above. Fix the calibration first, or add it manually later via "
           f"frisbee_analysis.calibration_bank.add_entry once you trust it.")
 else:
+    if not single_frame:
+        print(f"\nNOT added to the calibration bank ({bank_dir}) -- your clicks came from "
+              f"{len(_click_frames)} different frames ({_click_frames}). One homography must be "
+              f"fitted from correspondences on a SINGLE frame: the mosaic is for pooling "
+              f"detections across a pan, not for sourcing correspondences, and chaining clicks "
+              f"through per-frame homographies puts that chain's error into the calibration. "
+              f"Re-run and click every line on one frame (browse with n/p to find the frame "
+              f"that shows the most lines at once), or use run_field_lines_propose.py --assign.")
+        raise SystemExit(0)
     entry_dir = add_bank_entry(bank_dir, ref_frame, calib)
     print(f"\nAdded to the calibration bank: {entry_dir}")
     print(f"Future segments with a similar camera framing can auto-match against this via "

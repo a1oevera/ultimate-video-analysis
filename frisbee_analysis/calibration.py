@@ -319,34 +319,460 @@ def field_to_pixel(fx, fy, calib: Calibration):
     return float(pt[0, 0, 0]), float(pt[0, 0, 1])
 
 
+def vertices_within_bounds(calib: Calibration, frame_w: float, frame_h: float,
+                            cfg: UltimatePitchConfiguration = None, margin: float = 8.0) -> bool:
+    """Sanity check a calibration can't get from reprojection error alone.
+
+    MEASURED (torovcanyon.mp4, t=3945s): a calibration whose sideline click
+    points were only 262px apart (spanning a field line that runs the WHOLE
+    field length) had source_max_reprojection_px = 0.0036 -- near-perfect --
+    while the far corner it never directly constrained projected to pixel
+    (515660, 41790), over 500,000px outside any real frame. Reprojection
+    error only checks that clicked points are self-consistent with the line
+    already fit through them; it says nothing about whether that line had
+    enough spread to constrain the REST of the field. This check catches
+    that failure mode directly: every field vertex, including ones never
+    directly clicked, must project somewhere within a generous margin around
+    the actual frame/canvas -- a real calibration error might be off by tens
+    of pixels, not hundreds of thousands.
+
+    margin=8.0 (bound at 9x frame width/height) is set from the two real
+    data points measured so far, not guessed: the ACTUALLY-GOOD recalibration
+    above still had its farthest (never-clicked) vertex land at 4.6x frame
+    width -- legitimately off-camera, not wrong -- while the broken one hit
+    268.6x. 8x sits with wide margin above the good case and nowhere near the
+    bad one; revisit if a real calibration ever legitimately needs more.
+
+    This is what let calibration_bank.py's add_entry silently keep a broken
+    calibration over a fixed one: it compared ONLY source_max_reprojection_px
+    (0.0036 vs the fixed version's 2.74) and picked the "better" number,
+    which was actually the worse calibration. Use this ALONGSIDE reprojection
+    error, never as a replacement for it -- a calibration can fail this check
+    while still having a fine line-only reprojection error, and vice versa."""
+    cfg = cfg or UltimatePitchConfiguration()
+    lo_x, hi_x = -margin * frame_w, (1 + margin) * frame_w
+    lo_y, hi_y = -margin * frame_h, (1 + margin) * frame_h
+    for fx, fy in cfg.vertices:
+        px, py = field_to_pixel(fx, fy, calib)
+        if not (lo_x <= px <= hi_x and lo_y <= py <= hi_y):
+            return False
+    return True
+
+
 def is_in_field(x, y, calib: Calibration, cfg: UltimatePitchConfiguration = None,
                  margin_cm: float = 0.0) -> bool:
     """Is pixel (x,y) inside the field boundary (including endzones), per the
     fitted calibration? Works even for field regions (e.g. a far endzone)
-    that were never directly visible/clicked -- see module docstring."""
+    that were never directly visible/clicked -- see module docstring.
+
+    WARNING: this asks only whether the point PROJECTS inside the field. It
+    does not ask whether the calibration can be trusted there. Most
+    calibrations from this footage are LOCAL (see `field_validity_region`) --
+    canvas_002 is meaningful only out to x=54.7m of a 100m field -- and a
+    pixel beyond that limit projects to an arbitrary coordinate that lands
+    inside the boundary as often as not. For anything MEASURED from a
+    position (speed, distance, which third of the field play is in), use
+    `is_measurable` instead."""
     cfg = cfg or UltimatePitchConfiguration()
     fx, fy = pixel_to_field(x, y, calib)
     return (-margin_cm <= fx <= cfg.length + margin_cm) and (-margin_cm <= fy <= cfg.width + margin_cm)
 
 
-def draw_field_overlay(image, calib: Calibration, cfg: UltimatePitchConfiguration = None):
-    """Project the FULL field outline (including any off-camera portions,
-    e.g. an endzone never directly clicked) onto the image via the fitted
-    homography, for visual sanity-checking."""
+GOAL_EDGES = ((3, 4), (5, 6))
+_OBSERVED_COLOUR = (0, 230, 0)     # BGR green  -- span the clicks actually cover
+_ESTIMATED_COLOUR = (0, 200, 255)  # amber      -- computed from WFDF geometry
+_GOAL_COLOUR = (255, 0, 255)       # magenta    -- goal lines, either way
+
+
+def draw_dashed_line(image, p1, p2, colour, thickness: int = 3, dash: int = 22):
+    """Dashes in IMAGE space (uniform on screen), so a dashed line reads the
+    same whether it is near or far. Shared with field_model.draw_field_model
+    so the two drawings mean the same thing by the same marks."""
+    p1 = np.array(p1, dtype=np.float64)
+    p2 = np.array(p2, dtype=np.float64)
+    length = float(np.hypot(*(p2 - p1)))
+    if length < 1e-6 or not np.isfinite(length):
+        return
+    steps = max(2, int(length / dash))
+    for k in range(0, steps, 2):
+        a = p1 + (p2 - p1) * (k / steps)
+        b = p1 + (p2 - p1) * min(1.0, (k + 1) / steps)
+        cv2.line(image, (int(a[0]), int(a[1])), (int(b[0]), int(b[1])), colour, thickness)
+
+
+def _evidence_points_by_edge(calib: Calibration, cfg: UltimatePitchConfiguration,
+                              tol_cm: float = 200.0) -> dict:
+    """The calibration's OWN clicks, in field coordinates, grouped by the edge
+    they support. Keys are oriented as in cfg.edges."""
+    verts = cfg.vertices
+    known = [tuple(e) for e in cfg.edges]
+    by_edge = {}
+    if calib.line_details:
+        # a line fit already says which edge each click belongs to
+        for entry in calib.line_details:
+            edge = tuple(entry.get("edge", ()))
+            if len(edge) != 2:
+                continue
+            key = edge if edge in known else edge[::-1]
+            if key not in known:
+                continue
+            for x, y in entry.get("points", []):
+                by_edge.setdefault(key, []).append(pixel_to_field(x, y, calib))
+    else:
+        # a point fit does not, so ask geometry: a clicked corner is evidence
+        # for every edge it lies on
+        for fx, fy in (calib.field_points or []):
+            for edge in cfg.edges:
+                a = np.array(verts[edge[0] - 1], dtype=np.float64)
+                b = np.array(verts[edge[1] - 1], dtype=np.float64)
+                ab = b - a
+                t = float(np.clip((np.array([fx, fy]) - a) @ ab / (ab @ ab), 0.0, 1.0))
+                if np.hypot(*(a + ab * t - np.array([fx, fy]))) <= tol_cm:
+                    by_edge.setdefault(tuple(edge), []).append((float(fx), float(fy)))
+    return by_edge
+
+
+def evidence_spans(calib: Calibration, cfg: UltimatePitchConfiguration = None) -> dict:
+    """How much of each field edge did this calibration's clicks actually see?
+
+    Returns {(vi,vj): (t_lo, t_hi)}, t being the fraction along the edge from
+    vertex vi to vertex vj. An edge with fewer than two supporting clicks is
+    absent from the dict -- nothing was observed there, so all of it is
+    extrapolation.
+
+    This exists because the question "is this line measured or computed?" has
+    a per-SEGMENT answer, not a per-line one. On torovcanyon.mp4's canvas_002
+    the six clicks along the blue near sideline cover x=35.4m to 47.8m of its
+    100m and nothing else; drawing the whole sideline the same way claims
+    evidence for the other 88% of it. See results/field_lines_finding.md
+    Result 3.14."""
+    cfg = cfg or UltimatePitchConfiguration()
+    verts = cfg.vertices
+    spans = {}
+    for edge, pts in _evidence_points_by_edge(calib, cfg).items():
+        a = np.array(verts[edge[0] - 1], dtype=np.float64)
+        b = np.array(verts[edge[1] - 1], dtype=np.float64)
+        ab = b - a
+        ts = [float(np.clip((np.array(p) - a) @ ab / (ab @ ab), 0.0, 1.0))
+              for p in pts if np.all(np.isfinite(p))]
+        if len(ts) >= 2 and max(ts) - min(ts) > 1e-6:
+            spans[edge] = (min(ts), max(ts))
+    return spans
+
+
+def is_measurable(x, y, calib: Calibration, cfg: UltimatePitchConfiguration = None,
+                   margin_cm: float = 0.0) -> bool:
+    """Is pixel (x,y) inside the field AND inside the region this calibration
+    can actually represent?
+
+    The check `is_in_field` cannot make, and the one anything numeric needs.
+    A calibration fitted from evidence at one end of a field is LOCAL: past
+    its horizon the projection is meaningless, but the coordinates it returns
+    are ordinary finite numbers that frequently fall inside 0..100m x 0..37m.
+    Filtering with `is_in_field` alone therefore admits positions that are
+    pure noise, and a speed computed between two such positions is noise
+    times a frame rate.
+
+    MEASURED (results/field_lines_finding.md Result 3.14): canvas_002, the
+    calibration behind the numbers in results/metrics_finding.md, is usable
+    to x=54.7m of a 100m field. Roughly the far half of every position it
+    reports was never measurable."""
+    cfg = cfg or UltimatePitchConfiguration()
+    fx, fy = pixel_to_field(x, y, calib)
+    if not (np.isfinite(fx) and np.isfinite(fy)):
+        return False
+    if not (-margin_cm <= fx <= cfg.length + margin_cm and
+            -margin_cm <= fy <= cfg.width + margin_cm):
+        return False
+    return fx <= field_validity_region(calib, cfg)["usable_x_max"]
+
+
+def draw_field_overlay(image, calib: Calibration, cfg: UltimatePitchConfiguration = None,
+                        clip_to_validity: bool = True, legend: bool = True,
+                        samples: int = 96, spans: dict = None):
+    """Project the field outline onto the image, drawn so it never claims more
+    than it knows:
+
+      SOLID   -- the part of an edge the clicks actually cover (measured)
+      DASHED  -- the rest, computed from the homography + WFDF dimensions
+      not drawn at all -- anything past `field_validity_region`'s usable_x_max,
+                         where the fit is extrapolating past its own horizon
+
+    The old version drew all six edges as one flat yellow outline. That is what
+    made canvas_002's bowtie look like a broken calibration rather than what it
+    is (a LOCAL one, good to x=54.7m -- results/field_lines_finding.md Result
+    3.14): the fold lives entirely in the extrapolated far end, and a drawing
+    that gives guesses and measurements the same ink cannot show that.
+    `field_model.draw_field_model` already used solid/dashed this way; this is
+    the same convention on the calibration's own outline.
+
+    Pass `clip_to_validity=False` to see the raw projection including any fold
+    -- that is a diagnostic view, not the one to judge a calibration by.
+
+    `spans` overrides the evidence lookup, for callers drawing a calibration
+    whose clicks live in a DIFFERENT image than the one being drawn on: a
+    per-frame stand-in calibration (run_calibrate_preview.py) or a bank
+    composition (calibration_bank.py) carries no clicks of its own, but the
+    spans are field-space quantities, so the source calibration's are still
+    exactly right. Compute them once with `evidence_spans(source_calib)`."""
     cfg = cfg or UltimatePitchConfiguration()
     vis = image.copy()
-    verts_px = [field_to_pixel(fx, fy, calib) for fx, fy in cfg.vertices]
-    for i, j in cfg.edges:
-        p1 = tuple(int(v) for v in verts_px[i - 1])
-        p2 = tuple(int(v) for v in verts_px[j - 1])
-        cv2.line(vis, p1, p2, (0, 255, 255), 2)
-    # explicitly draw both goal lines (endzone boundaries), whether or not
-    # their own corner cones were ever visible/clicked -- this is the "can we
-    # estimate an off-camera endzone" answer made visible
-    for gx in (cfg.goal_line_near, cfg.goal_line_far):
-        p1 = tuple(int(v) for v in field_to_pixel(gx, 0, calib))
-        p2 = tuple(int(v) for v in field_to_pixel(gx, cfg.width, calib))
-        cv2.line(vis, p1, p2, (255, 0, 255), 2)
-    for x, y in verts_px:
-        cv2.circle(vis, (int(x), int(y)), 6, (0, 0, 255), -1)
+    verts = cfg.vertices
+    spans = evidence_spans(calib, cfg) if spans is None else spans
+    region = field_validity_region(calib, cfg)
+    x_max = region["usable_x_max"] if clip_to_validity else float("inf")
+    H_inv = np.linalg.inv(calib.H())
+    goal_edges = [tuple(e) for e in GOAL_EDGES]
+    h_img, w_img = vis.shape[:2]
+    n_visible = 0  # samples that land inside the frame at all
+
+    def project(field_pts):
+        px = cv2.perspectiveTransform(
+            np.asarray(field_pts, dtype=np.float64).reshape(-1, 1, 2), H_inv).reshape(-1, 2)
+        return px
+
+    for edge in cfg.edges:
+        edge = tuple(edge)
+        a = np.array(verts[edge[0] - 1], dtype=np.float64)
+        b = np.array(verts[edge[1] - 1], dtype=np.float64)
+        span = spans.get(edge)
+        colour_est = _GOAL_COLOUR if edge in goal_edges else _ESTIMATED_COLOUR
+        colour_obs = _GOAL_COLOUR if edge in goal_edges else _OBSERVED_COLOUR
+        ts = np.linspace(0.0, 1.0, samples + 1)
+        field_pts = [a + (b - a) * t for t in ts]
+        px = project(field_pts)
+        drawable = [bool(p[0] <= x_max) and bool(np.all(np.isfinite(q))) and
+                    bool(np.max(np.abs(q)) < 1e5) for p, q in zip(field_pts, px)]
+        observed = [span is not None and span[0] - 1e-9 <= t <= span[1] + 1e-9 for t in ts]
+        n_visible += sum(1 for d, q in zip(drawable, px)
+                         if d and 0 <= q[0] < w_img and 0 <= q[1] < h_img)
+        i = 0
+        while i < len(ts):
+            if not drawable[i]:
+                i += 1
+                continue
+            j = i
+            while j + 1 < len(ts) and drawable[j + 1] and observed[j + 1] == observed[i]:
+                j += 1
+            # carry one sample into the next run so observed/estimated meet
+            # without a visible gap at the handover
+            end = j + 1 if (j + 1 < len(ts) and drawable[j + 1]) else j
+            p1 = tuple(int(round(v)) for v in px[i])
+            p2 = tuple(int(round(v)) for v in px[end])
+            if p1 != p2:
+                if observed[i]:
+                    cv2.line(vis, p1, p2, colour_obs, 2)
+                else:
+                    draw_dashed_line(vis, p1, p2, colour_est, 2)
+            i = j + 1
+
+    # corners: filled where a click landed on one, hollow where its position is
+    # purely computed, absent where it is past the validity horizon
+    n_hidden = 0
+    for vi in range(1, 9):
+        fx, fy = verts[vi - 1]
+        if fx > x_max:
+            n_hidden += 1
+            continue
+        p = project([(fx, fy)])[0]
+        if not np.all(np.isfinite(p)) or np.max(np.abs(p)) >= 1e5:
+            n_hidden += 1
+            continue
+        supported = False
+        for edge, (t_lo, t_hi) in spans.items():
+            if edge[0] == vi and t_lo <= 0.02:
+                supported = True
+            if edge[1] == vi and t_hi >= 0.98:
+                supported = True
+        centre = (int(round(p[0])), int(round(p[1])))
+        cv2.circle(vis, centre, 6, (0, 0, 255), -1 if supported else 2)
+
+    if legend:
+        lines = ["solid = fitted to clicked paint    dashed = computed from WFDF geometry"]
+        if not spans:
+            # a bank-composed calibration keeps only its homography and its
+            # source error; its clicks are not carried through composition
+            # (calibration_bank.py), so NOTHING here can be shown as measured
+            lines.append("no per-line evidence recorded for this calibration -- "
+                         "all of it drawn as computed")
+        if clip_to_validity:
+            note = (f"valid to x={region['usable_x_max'] / 100:.1f}m "
+                    f"({region['usable_fraction'] * 100:.0f}% of field length)")
+            if n_hidden:
+                note += f"; {n_hidden} corner(s) beyond it, not drawn"
+            lines.append(note)
+        else:
+            lines.append("UNCLIPPED diagnostic view -- includes any fold past the horizon")
+        if not n_visible:
+            # canvas_004 does this: every part of the field it can still be
+            # trusted about projects outside the frame entirely. An empty
+            # overlay is the honest drawing, but say so rather than look broken
+            lines.append("nothing drawn: no part of the valid region "
+                         "projects into this frame")
+        if calib.source_max_reprojection_px is not None:
+            lines.append(f"worst clicked-line reprojection: "
+                         f"{calib.source_max_reprojection_px:.1f}px")
+        # shrink to fit rather than run off the edge -- bank canvases are not
+        # all full-resolution frames (canvas_000 is 641px wide)
+        font, base = cv2.FONT_HERSHEY_SIMPLEX, 0.6
+        widest = max(cv2.getTextSize(t, font, base, 1)[0][0] for t in lines)
+        scale = base * min(1.0, (vis.shape[1] - 24) / max(1.0, widest))
+        step = max(11, int(round(26 * scale / base)))
+        y = vis.shape[0] - step // 2 - step * (len(lines) - 1)
+        for text in lines:
+            for c, th in (((0, 0, 0), max(2, int(round(4 * scale / base)))),
+                          ((255, 255, 255), 1)):
+                cv2.putText(vis, text, (12, y), font, scale, c, th, cv2.LINE_AA)
+            y += step
     return vis
+
+
+def field_in_front_of_camera(calib: Calibration, cfg: UltimatePitchConfiguration = None) -> bool:
+    """Does the whole field lie on ONE side of the horizon?
+
+    THE check that the other two structurally cannot make, and the actual
+    defect behind bank canvas_002 (see results/field_lines_finding.md).
+    Under field->image, each vertex has a homogeneous w = H_inv[2] . (fx,fy,1).
+    A sign change between vertices means the fitted camera puts part of the
+    field BEHIND itself -- the image of the line at infinity cuts through the
+    playing surface. No real camera filming a field can do that.
+
+    Why the existing checks miss it:
+      - `vertices_within_bounds` only catches a field that EXPLODES (a vertex
+        projecting hundreds of thousands of px away). A field that collapses
+        past the horizon has every vertex comfortably inside a generous box,
+        just folded.
+      - `field_lines.projected_field_is_sane` catches the resulting bowtie
+        shape, which is a SYMPTOM. This catches the cause, and does so with a
+        physical statement rather than a geometric one.
+
+    MEASURED, and the separation is total:
+      canvas_000 (verified good)      w signs + + + + + + + +   -> True
+      canvas_002 / canvas_003         w signs - - - - + - + -   -> False
+      canvas_004 (known bad, 55px)    w signs + - + - - - - -   -> False
+      five synthetic sideline cameras                           -> True
+    canvas_002 puts vertices 5 and 7 -- the far end of the field at y=0 --
+    on the far side of the horizon from everything else, which is exactly why
+    its far half projects nonsensically while its clicked stretches fit to
+    2.7px."""
+    cfg = cfg or UltimatePitchConfiguration()
+    H_inv = np.linalg.inv(calib.H())
+    ws = [float(H_inv[2, 0] * fx + H_inv[2, 1] * fy + H_inv[2, 2])
+          for fx, fy in cfg.vertices[:8]]
+    if any(abs(w) < 1e-12 for w in ws):
+        return False   # a vertex sits exactly ON the horizon
+    return all(w > 0 for w in ws) or all(w < 0 for w in ws)
+
+
+def field_covers_points(calib: Calibration, image_points,
+                         cfg: UltimatePitchConfiguration = None,
+                         margin_cm: float = 800.0) -> bool:
+    """Do the pixels this calibration was FITTED FROM land inside the field
+    it produces?
+
+    A fit is supposed to explain its own evidence. A homography that maps
+    every clicked point outside the 100m x 37m boundary has explained nothing
+    -- it has found a projective map that satisfies the line equations while
+    placing the actual field somewhere the clicks never were. That is the
+    collapse mode `vertices_within_bounds` cannot see, since it only tests
+    for explosion.
+
+    `margin_cm` is generous (8m) on purpose: clicks legitimately land just
+    outside a boundary line, and a sideline clicked from the stands can sit a
+    metre or two wide. This is meant to catch a fit that is off by a field,
+    not one that is off by a metre."""
+    cfg = cfg or UltimatePitchConfiguration()
+    if not len(image_points):
+        return True
+    inside = 0
+    for x, y in image_points:
+        fx, fy = pixel_to_field(x, y, calib)
+        if not (np.isfinite(fx) and np.isfinite(fy)):
+            continue
+        if (-margin_cm <= fx <= cfg.length + margin_cm and
+                -margin_cm <= fy <= cfg.width + margin_cm):
+            inside += 1
+    return inside >= 0.75 * len(image_points)
+
+
+def field_validity_region(calib: Calibration, cfg: UltimatePitchConfiguration = None,
+                           safety: float = 0.85):
+    """Where on the field is this calibration actually usable?
+
+    MEASURED, and this function exists because a hard pass/fail was the wrong
+    shape of answer (torovcanyon.mp4, canvas_002 -- see
+    results/field_lines_finding.md). That calibration fails
+    `field_in_front_of_camera`, and the person is right that it is still the
+    most accurate one available: round-tripping a grid of field points through
+    it gives 1 image pixel = 0.01-0.04 m on the ground everywhere from x=0 to
+    x=60m. It is not degenerate. Its horizon simply falls ACROSS the field --
+    the field vanishes at x=64.4m along one sideline and x=117.5m along the
+    other -- so the far corners land on opposite sides of it, and that sign
+    split is the bowtie. Everything the camera can actually see is fine.
+
+    A calibration fitted from evidence at one end of a field is therefore not
+    "wrong"; it is LOCAL. Rejecting it throws away a good measurement of the
+    near half. Reporting its validity region keeps it, and keeps the far half
+    honestly unavailable.
+
+    Returns a dict:
+      horizon_x_at(y)     -- callable, field x where the plane vanishes at that y
+      usable_x_max        -- smallest horizon x across the field's width, scaled
+                             by `safety` (perspective compresses violently as the
+                             horizon is approached, so stop short of it)
+      whole_field_usable  -- True when the entire field is comfortably in front
+      usable_fraction     -- fraction of the field's length that is usable
+    """
+    cfg = cfg or UltimatePitchConfiguration()
+    H_inv = np.linalg.inv(calib.H())
+    a, b, c = H_inv[2, 0], H_inv[2, 1], H_inv[2, 2]
+
+    def horizon_x_at(y):
+        if abs(a) < 1e-15:
+            return float("inf")
+        return -(b * y + c) / a
+
+    xs = [horizon_x_at(y) for y in (0.0, cfg.width / 2.0, float(cfg.width))]
+    positive = [x for x in xs if x > 0]
+    if not positive:
+        # No horizon crossing at any positive x. That is NOT "unusable" -- it
+        # means the vanishing line sits behind x=0, so w keeps one sign across
+        # the whole 0..length extent and every part of the field is equally
+        # projectable. (Measured on a synthetic camera placed 15m behind the
+        # near back line looking down the field: every horizon_x_at(y) is
+        # negative, and the field projects perfectly. The earlier version
+        # returned usable_x_max=0 for exactly this camera, which only stayed
+        # invisible while the number was reported rather than used -- it now
+        # decides what draw_field_overlay is allowed to draw.)
+        if any(np.isnan(x) for x in xs) or any(x == 0 for x in xs):
+            # degenerate: the vanishing line passes through the field's own
+            # x=0 edge (or the fit is not a usable map at all)
+            return {"horizon_x_at": horizon_x_at, "usable_x_max": 0.0,
+                    "whole_field_usable": False, "usable_fraction": 0.0}
+        return {"horizon_x_at": horizon_x_at, "usable_x_max": float(cfg.length),
+                "whole_field_usable": True, "usable_fraction": 1.0}
+    usable = min(positive) * safety
+    return {"horizon_x_at": horizon_x_at,
+            "usable_x_max": float(usable),
+            "whole_field_usable": bool(usable >= cfg.length),
+            "usable_fraction": float(min(1.0, usable / cfg.length))}
+
+
+def calibration_covers_evidence(calib: Calibration, image_points,
+                                 cfg: UltimatePitchConfiguration = None) -> bool:
+    """Is the calibration valid where its own evidence lives?
+
+    The replacement for using `field_in_front_of_camera` as a veto. A local
+    calibration is fine; a calibration whose valid region does not even contain
+    the points it was fitted from is not, because then nothing it says is
+    supported by anything."""
+    cfg = cfg or UltimatePitchConfiguration()
+    if not len(image_points):
+        return True
+    region = field_validity_region(calib, cfg)
+    ok = 0
+    for x, y in image_points:
+        fx, fy = pixel_to_field(x, y, calib)
+        if np.isfinite(fx) and np.isfinite(fy) and 0.0 <= fx <= region["usable_x_max"]:
+            ok += 1
+    return ok >= 0.75 * len(image_points)

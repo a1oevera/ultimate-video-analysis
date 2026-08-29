@@ -1,3 +1,20 @@
+> **CORRECTION (2026-08-26) — the numbers below were computed without a
+> validity bound.** The calibration they used (bank `canvas_002`) is LOCAL:
+> meaningful only to x=54.7m of the 100m field, because past that the field
+> crosses the horizon (see `results/field_lines_finding.md` Result 3.14).
+> `is_in_field` only asks whether a point PROJECTS inside the boundary, never
+> whether the calibration can be trusted there — and past the limit the
+> projection returns ordinary finite coordinates that land inside the field
+> about 14% of the time. Those positions, and any speed derived from a pair of
+> them, were noise.
+>
+> `calibration.is_measurable` adds the bound and `run_metrics_test.py` now uses
+> it, reporting how many detections it drops. Re-run on t=3945s+30s: 7
+> detections dropped, 375 pooled in-field detections, **72 usable speed samples**
+> (against 8 in the original run), team A 1.16 m/s mean / 0.67 median, team B
+> 1.07 / 0.51. Still only the near half of the field — nothing here covers play
+> beyond x=54.7m.
+
 # B5 First-Pass Finding: end-to-end team metrics (measured on real footage)
 
 Closes the first version of `NEXT_STEPS.md` B5 — wiring registration +

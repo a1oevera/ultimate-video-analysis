@@ -24,7 +24,9 @@ import sys
 import cv2
 import numpy as np
 from frisbee_analysis import UltimatePitchConfiguration, MosaicConfig, register_sequence
-from frisbee_analysis.calibration import Calibration, draw_field_overlay
+from frisbee_analysis.calibration import (Calibration, draw_field_overlay,
+                                          evidence_spans)
+from frisbee_analysis.video_overlays import overlay_boxes_for
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/videoplayback.mp4"
 calib_path = sys.argv[2] if len(sys.argv) > 2 else "outputs/calibration.json"
@@ -41,12 +43,7 @@ if not cap.isOpened():
     sys.exit(f"could not open {video_path}")
 _frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 _frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-if (_frame_w, _frame_h) == (1920, 1080):
-    OVERLAY_BOXES = [(0, 0, 1920, 230), (0, 860, 1920, 950)]
-elif (_frame_w, _frame_h) == (640, 360):
-    OVERLAY_BOXES = [(0, 295, 640, 360)]
-else:
-    OVERLAY_BOXES = []
+OVERLAY_BOXES = overlay_boxes_for(video_path, _frame_w, _frame_h)
 
 video_fps = cap.get(cv2.CAP_PROP_FPS)
 step = max(1, int(round(video_fps / sample_fps)))
@@ -83,6 +80,11 @@ seg_idx.sort()
 print(f"Using segment {seg_id}: {len(seg_idx)} frames (contains {len(matching_segs & {seg_id})} "
       f"of the calibration's own source frames)")
 
+# the clicks live in the segment's REFERENCE frame, not in the frame being
+# drawn, so the per-frame stand-in Calibration below has no evidence of its
+# own. Spans are field-space, so the source calibration's transfer unchanged.
+spans = evidence_spans(calib, cfg)
+
 h, w = frames[0].shape[:2]
 writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), sample_fps, (w, h))
 for fi in seg_idx:
@@ -90,8 +92,11 @@ for fi in seg_idx:
     # frame-specific stand-in Calibration whose H is (calib.H() @ frame_H)
     frame_calib = Calibration(homography=(calib.H() @ homography_by_idx[fi]).tolist(),
                                keypoint_labels=[], image_points=[], field_points=[],
-                               image_path=calib.image_path)
-    overlay = draw_field_overlay(frames[fi], frame_calib, cfg)
+                               image_path=calib.image_path,
+                               # carry the source error so every frame of the
+                               # preview states it, not just the static overlay
+                               source_max_reprojection_px=calib.source_max_reprojection_px)
+    overlay = draw_field_overlay(frames[fi], frame_calib, cfg, spans=spans)
     writer.write(overlay)
 writer.release()
 print(f"Saved {len(seg_idx)}-frame preview to {out_path}")

@@ -52,7 +52,9 @@ import numpy as np
 import supervision as sv
 from ultralytics import YOLO
 from frisbee_analysis import UltimatePitchConfiguration, MosaicConfig, register_sequence
-from frisbee_analysis.calibration import Calibration, pixel_to_field, is_in_field
+from frisbee_analysis.calibration import (Calibration, pixel_to_field, is_in_field,
+                                          is_measurable, field_validity_region)
+from frisbee_analysis.video_overlays import overlay_boxes_for
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/videoplayback.mp4"
 calib_path = sys.argv[2] if len(sys.argv) > 2 else "outputs/calibration.json"
@@ -69,12 +71,7 @@ if not cap.isOpened():
     sys.exit(f"could not open {video_path}")
 _frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 _frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-if (_frame_w, _frame_h) == (1920, 1080):
-    OVERLAY_BOXES = [(0, 0, 1920, 230), (0, 860, 1920, 950)]
-elif (_frame_w, _frame_h) == (640, 360):
-    OVERLAY_BOXES = [(0, 295, 640, 360)]
-else:
-    OVERLAY_BOXES = []
+OVERLAY_BOXES = overlay_boxes_for(video_path, _frame_w, _frame_h)
 
 video_fps = cap.get(cv2.CAP_PROP_FPS)
 step = max(1, int(round(video_fps / sample_fps)))
@@ -211,6 +208,7 @@ with warnings.catch_warnings():
 # a threshold pooled across the whole window (see module docstring).
 # per-frame list of dicts: box, tid (or None), fx/fy (field cm), sat
 frame_records = {}
+n_past_horizon = 0   # detections on the field but beyond where this calibration means anything
 
 for fi in seg_idx:
     frame = frames[fi]
@@ -267,7 +265,18 @@ for fi in seg_idx:
         # boundary. Trade-off: a real player exactly on the line could drop
         # out on foot-point/calibration noise; that's the safer direction
         # than counting bystanders as players.
+        # MEASURED GAP (results/field_lines_finding.md Result 3.14): is_in_field
+        # only asks whether a point PROJECTS inside the boundary, never whether
+        # the calibration is trustworthy there. Most calibrations from this
+        # footage are LOCAL -- canvas_002 is meaningful only to x=54.7m of a
+        # 100m field -- and past that limit the projection returns ordinary
+        # finite coordinates that land inside the field ~14% of the time.
+        # Every such position, and every speed derived from a pair of them,
+        # was noise. is_measurable adds the validity bound.
         if not is_in_field(foot_x, foot_y, frame_calib, cfg, margin_cm=0.0):
+            continue
+        if not is_measurable(foot_x, foot_y, frame_calib, cfg, margin_cm=0.0):
+            n_past_horizon += 1
             continue
         fx, fy = pixel_to_field(foot_x, foot_y, frame_calib)
         other_boxes = np.delete(boxes, i, axis=0)
@@ -288,6 +297,16 @@ if len(all_vals) >= 4:
     val_thresh, _ = cv2.threshold(val_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 else:
     val_thresh = float(np.median(all_vals)) if len(all_vals) else 0.0
+_validity = field_validity_region(calib, cfg)
+print(f"\nCALIBRATION VALIDITY: usable to x={_validity['usable_x_max'] / 100:.1f}m of the "
+      f"{cfg.length / 100:.0f}m field ({_validity['usable_fraction'] * 100:.0f}%).")
+if not _validity["whole_field_usable"]:
+    print("  This calibration is LOCAL -- past that x the field crosses the horizon and any")
+    print("  position it reports there is meaningless. Nothing below covers the far end.")
+print(f"  Detections dropped as past the horizon: {n_past_horizon} "
+      f"(these WOULD have been counted by is_in_field alone, and every speed derived")
+print("   from a pair of them would have been noise -- see field_lines_finding.md 3.14)")
+
 print(f"\nGlobal team brightness threshold (Otsu, over {len(all_vals)} pooled in-field "
       f"detections): {val_thresh:.1f}")
 

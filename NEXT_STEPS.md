@@ -182,6 +182,233 @@ one. Also tested (and rejected) a cheaper alternative first: plain HSV
 color-filtering for cones had too many false positives (crowd skin tone
 especially) to trust -- see Addendum 4 in the same doc.
 
+**✅ DONE (2026-08-25): scene-aware field line detection + cross-pan
+TRACKING** (see `results/field_lines_finding.md`,
+`frisbee_analysis/field_lines.py`, `run_field_lines_test.py`,
+`run_field_lines_propose.py`). Reverses the earlier "automated detection is
+not a quick win" call, for the reason that note itself named: the old
+attempts ran over the WHOLE frame with no idea which pixels were field.
+Restricting to a colour+texture playing-surface mask (no geometry needed --
+so the "circular without a calibration" objection was wrong), detecting
+white paint as a multi-scale local-contrast RIDGE rather than a Canny edge,
+and pooling detections across a pan in `mosaic.py`'s shared segment
+coordinates takes one frame from 888 naive Hough segments to 6 real lines,
+and recovers **3 of the 4 lines a human clicked to within 1.4-6.3px and
+1.3 degrees, with no clicking at all** (torovcanyon.mp4 t=3945-4005s).
+Cone hints are usable too now -- subtracting YOLO person boxes kills the
+skin-tone confound that sank Addendum 4 (on-surface false positives 17->0
+and 15->1) -- but real cones are only ~3-5px at broadcast distance, so they
+stay corroboration, never anchors.
+
+**Output shape (2026-08-25, per the person)**: `frisbee_analysis/field_model.py`
+emits exactly SIX connected lines -- two sidelines, two end lines, two goal
+lines -- each tagged `observed` (paint was detected) or `estimated` (position
+computed from the homography + WFDF dimensions). They connect by construction,
+since all six come from one homography applied to `ultimate_config.py`. This
+matters on `torovcanyon.mp4`, where half the ultimate boundary is not painted
+at all (near sideline is BLUE, far sideline is white only inside the endzones)
+so the far sideline across midfield can only ever be estimated. Labelling
+search now enforces ORDER PRESERVATION (a homography preserves the order in
+which parallel lines cross a transversal), which fixed the blue line being
+mislabelled an end line and cut the best model's worst residual 215px -> 29px.
+
+**Camera coverage awareness (2026-08-25, per the person)**: a broadcast shot
+almost never frames the whole field. `segment_pan_polygon` gives the mosaic
+footprint the camera actually swept; `visible_extent` pushes it through the
+fitted homography to say which part of the field is in view, in metres; every
+model line is tagged `in_frame`/`in_pan`/`unseen`. Two gates follow from it --
+a line the camera never pointed at cannot be "observed", and the implied
+coverage must be physically sensible for the known field size (this caught a
+fit claiming its pan swept 164m across a 37m-wide field). Also measured:
+ranking by "how much paint do these six lines explain" rewards a WRONGLY
+SHRUNKEN field, since more of the soccer markings underneath fall inside it.
+
+**CORRECTED (2026-08-25, per the person): canvas_002 is LOCAL, not broken.**
+Round-trip conditioning is 0.01-0.04 m per image pixel across x=0-60m -- sharp
+everywhere the camera sees. Its horizon is TILTED across the field (vanishing
+at x=64.4m along one sideline, 117.5m along the other), so only the unobserved
+far end is meaningless. New `calibration.field_validity_region` reports how far
+a calibration can be trusted (canvas_002: 54.7m = 54.7% of the field, which
+matches the independently-measured 52-56% the camera sweeps).
+`calibration_covers_evidence` replaces field_in_front_of_camera as the veto
+everywhere -- canvas_002 passes and would now be banked; canvas_004 (27.9m,
+fails on its own evidence) does not. The earlier "re-do the torovcanyon
+calibrations" action is retracted except for canvas_004.
+
+**Superseded note on canvas_002's "defect"**: not a mislabel and not a duplicate
+line -- the fitted camera puts part of the field BEHIND itself, i.e. the
+horizon cuts through the playing surface (vertices 5 and 7 have the opposite
+homogeneous sign to the rest). New check `calibration.field_in_front_of_camera`
+separates the bank perfectly: canvas_000 True, canvas_002/003/004 False, five
+synthetic cameras True. Also added: `field_covers_points` (a fit must contain
+the pixels it was fitted from -- catches COLLAPSE, which vertices_within_bounds
+structurally cannot), `field_lines.no_parallel_crossings` (lines assigned to
+parallel edges can't meet inside the paint), and a one-frame-per-calibration
+rule in run_calibrate.py. The duplicate-line hypothesis was measured and
+refuted: chained vs direct registration between frames 0 and 12 diverges by
+only 1.3-2.9px and re-deriving the line directly moves its angle 0.02 deg.
+
+**Search bug FOUND AND FIXED (2026-08-25)**: group_by_vanishing_point returns
+ONE split (largest VP cluster vs everything else), making the second "family"
+a grab-bag rather than a direction. New `field_lines.direction_hypotheses`
+enumerates every plausible VP pair (40 on the test window). Models found 0 ->
+3, blue-as-sideline candidates enumerated 672 -> 1,684, runtime 2m30s -> 46s.
+
+**WATCHER-AS-SEARCH-PRIOR: MEASURED, DOES NOT WORK (2026-08-26)**. Sweeping
+perpendicular offsets from the watcher row, the paint profile peaks at +32px
+(37.9%) while the TRUE far sideline sits at -11.2px with 2.6% density; every
+windowed variant peaks at +28..+44px too. Root cause found by sampling each
+stage along the person's clicked line: (a) V reads 73-99 against turf 52-78 --
+barely a step, so the ridge test fires on 3 of 9 samples and chroma on 1; and
+(b) THE SURFACE MASK EXCLUDES x=709-919, the endzone end that actually has
+paint, so part of the line isn't even in the search region.
+NEXT CONCRETE FIX: (b). The search region is the surface dilated 15px@1920,
+not enough where the boundary is ragged -- and a sideline is definitionally AT
+that boundary. Upstream of the problem, unlike everything else tried.
+
+**REGISTRATION DRIFT ADDRESSED (2026-08-26)**: `mosaic.refine_to_anchor`.
+Measured: chained homographies diverge from a direct anchor registration by a
+median 2.2px at chain depth <=20 and 7.7px past depth 40 -- which is the whole
+gap between human-clicked lines (0.5-2.7px) and tracked lines (rms 4.0-8.4px).
+Direct-to-anchor alone is not viable (28/59 frames, failures coverage-limited
+at 7-14% vs the 15% floor). refine_to_anchor makes every directly-registerable
+frame a hub and routes the rest through one hop: depth "up to N" -> 1 or 2, 20s
+for 30 frames, 15/29 direct. CAVEAT: the 0.00px divergence for direct frames is
+tautological; the 2-hop benefit follows from depth but is not independently
+measured. Wired into run_field_lines_propose.py, non-destructive.
+
+**REGRESSION TEST ADDED (2026-08-26)**: `run_regression_test.py` +
+`tests/fixtures/torovcanyon_3945.json`. 22 assertions pinning the
+human-confirmed labelling through every gate, the LOCAL-not-broken
+distinction, the metrics validity bound, decoy rejection, six-line model
+shape, and confusable-pair surfacing. Runs in seconds, no video needed.
+Section 7 reintroduces each historical bug and asserts the matching check
+flips -- all three caught. Motivated by the fact that three gates rejecting
+ground truth, a ranking term rewarding wrong answers, and a check that
+returned False for everything were ALL caught by the person, never by code.
+Run it before touching field_lines.py or field_model.py.
+
+**METRICS UNBLOCKED (2026-08-26)**: `calibration.is_measurable` adds the
+validity bound that `is_in_field` structurally lacks -- 14% of what is_in_field
+accepts on canvas_002 lies past its 54.7m horizon, where positions (and any
+speed from a pair of them) are noise. run_metrics_test.py now filters with it
+and prints the bound + drop count. Re-run t=3945s+30s: 72 usable speed samples
+(vs 8 originally), team A 1.16 m/s mean, team B 1.07 m/s, explicitly covering
+only the near 55% of the field. try_auto_calibrate now SKIPS a canvas whose own
+calibration fails calibration_covers_evidence (canvas_004, 27.9m) while still
+serving LOCAL ones (canvas_002/003, 54.7m). results/metrics_finding.md carries
+a correction note. REMAINING: canvas_004 needs a manual redo.
+
+**GATE STACK WAS REJECTING GROUND TRUTH (2026-08-26)**: the full search
+returned 0 of ~81,000 candidates. Two gates I built -- projected_field_is_sane
+and extent_is_plausible -- rejected the person's verified-correct labelling,
+both by judging field coordinates PAST THE HORIZON (same error as
+field_in_front_of_camera in Result 3.14). Fixed by clipping both to
+field_validity_region, plus robust percentile bounds instead of min/max in
+_bbox_in_field. All 9 gates now pass the correct labelling; canvas_004 is still
+correctly rejected. RULE: any check reading a projected field coordinate must
+first ask whether it is inside field_validity_region.
+
+**STILL BLOCKING**: the true far sideline is not in the tracked candidate set,
+so the search picks tracked[3] (the NEXT FIELD OVER, y~50m per the person's
+watcher measurement). NOT caused by extrapolation merging -- tested both ways,
+30-32px either way. The endzone paint stub is not surviving detection as its
+own line: short, adjacent to a stronger parallel line, partly occluded by the
+gear pile and standing players (Result 3.12).
+
+**BREAKTHROUGH (2026-08-25, measured by the person): watchers mark the
+unpainted sideline, and it is the FIRST signal that discriminates.**
+`frisbee_analysis/watchers.py`. YOLO foot points across a segment, fused in
+reference coords, filtered by persistence (>=20 distinct frames within 12px)
+and RANSAC'd into rows. On torovcanyon t=3945-4005s: 29 standing positions
+behind 1,435 detections, straight to 4.20px over 1,210px, sitting +4.0m
+outside a 37m field. Reproduces the person's numbers closely (their 1,060 pts
+/4.5px/1,330px, box 47px vs 46.6px, y 41.1m vs 41.0m).
+`watchers_outside_field` is a labelling GATE -- watchers stand outside the
+boundary -- and it SEPARATES the pair that defeated support, length,
+persistence, flank-matching, VP structure and reprojection error: True for the
+person's correct labelling, False for the wrong far sideline. Wired into
+fit_field_model as an optional watcher_rows gate.
+CAVEATS: it is a DIRECTION cue not a POSITION one (standoff ~4m and drifting
+along the field; standoff_from_paint is the route to fixing that using endzone
+paint where people and paint coexist). And a straight row of people is not by
+itself a sideline -- the fence/path row is STRAIGHTER (1.0px); separate on box
+height (36 vs 47px), not straightness.
+
+**RETRACTION (2026-08-25)**: the claim that the tracker's far-sideline estimate
+beat the person's clicks (37% vs 11% paint under it) was WRONG -- that detection
+follows the turf edge BEHIND the row of standing players, diverging from the
+true sideline by 73px across the frame. Paint support cannot distinguish a field
+marking from a high-contrast scene boundary parallel behind it, and on this
+footage the far sideline is exactly where such a boundary exists. Fitting the
+person's four clicked lines directly gives 2.74px max reprojection (vs 29.4px
+for every fit that used the detection) with residuals 1.8/0.7/0.6/0.0px.
+Standing weakness: every ranking in field_model.py leans on support/length/
+persistence, which measure evidence STRENGTH, not correctness of identity.
+
+**CORRECT LABELLING CONFIRMED (2026-08-25)**: canvas_002's original labelling
+is right -- (1,7) blue near sideline, (2,8) far sideline (white, endzone only),
+(1,2) end/back line, (3,4) near goal line. Fitted on the tracked lines it gives
+1.5 / 6.7 / 2.4 / 1.8px with both far-end lines correctly `estimated unseen`.
+Fixed a real bug found doing this: `_bbox_in_field` projected only polygon
+corners, which through a LOCAL calibration blow up past the horizon (pan extent
+came out as y=-163.9..6.6m on a 37m field), poisoning
+extent_supports_observation so build_field_model demoted its OWN fitted lines
+to `estimated`. Now samples the region and keeps only points in front of the
+camera. AUTO-RANKING STILL DOES NOT PICK THE RIGHT LABELLING -- use --assign.
+
+**RESOLVED (2026-08-25)**: the person asked why the sideline couldn't just be
+extended from the white paint inside the endzone -- which is exactly what a
+line correspondence does. Cones were never needed. Two over-constraints in the
+labelling search were hiding every valid model: (1) requiring the CROSS lines
+to share a vanishing point, which the long line + short endzone stub never do
+(fixed: only the sideline pair must be concurrent, geometry gates handle the
+rest); (2) ranking sideline families by member count, which buried the
+{blue, far sideline} cluster at rank 24 of 61 despite it carrying 431k support
+vs the top cluster's 208k (fixed: rank by evidence). Top model is now blue as a
+sideline at 1.5px residual, far sideline from endzone paint at 6.7px, near end
+line 2.0px, near goal line 1.8px, both far-end lines correctly `estimated
+unseen`. Also measured: the tracker's version of the far sideline is BETTER
+than the original 3 clicks (37% vs 11% paint under it).
+
+Remaining ambiguity is genuine, not a defect: which END of the field the camera
+is at (symmetric geometry), and which sideline is called "left" (convention).
+
+**What still needs a human, and why it is structural, not tuning**:
+deciding WHICH detected line is which. Four line correspondences determine a
+homography exactly, so every candidate labelling reproduces its own lines
+perfectly and the reprojection error says nothing about correctness
+(measured: a deliberately scrambled labelling scored 7.11px and passed every
+check). And a broadcast framing often shows only ONE sideline. So
+`run_field_lines_propose.py` detects and tracks automatically, then asks the
+person to name the lines it found -- much less error-prone than clicking
+points along lines they have to locate by eye.
+
+**⚠️ ACTION NEEDED: re-do the `torovcanyon.mp4` calibrations.** Building the
+above turned up a real bug: the calibration behind bank `canvas_002` (and
+`canvas_003`, and `outputs/calibration.json`) folds the field into a
+self-intersecting bowtie -- vertex 7 at (-1017,-157) while vertex 8, on the
+same back line, lands at (8050,1076). Reprojection error (2.74px) and
+`vertices_within_bounds` (True) BOTH pass it, because neither can see the
+shape of the projected field. NOTE: an earlier version of this entry blamed
+a sideline "clicked on bare turf" -- that was WRONG (the person corrected
+it: those clicks are on the field's BLUE near sideline, which the
+brightness-only detector of the time could not see). All four clicked lines
+are on real paint; which label is inconsistent is not yet identified, and
+re-fitting the same four correspondences from the tracker's own longer
+lines still fails the check. Three of four bank canvases are affected, so
+the `is_in_field` filtering and speed numbers in
+`results/metrics_finding.md` are unreliable for that video until it is
+redone. New check `projected_field_is_sane` is now wired into
+`run_calibrate.py`, `calibration_bank.add_entry` and `run_calibrate_auto.py`
+so a repeat gets caught at click time.
+
+**Measured scope**: works on `torovcanyon.mp4` (turf with painted markings);
+correctly finds nothing on `ojuc.mp4` (bare grass, cones only -- there is no
+paint to find, so that footage still needs `run_calibrate.py`); fails on
+`videoplayback.mp4` at 640x360 for a measured reason, and that is a UFA-size
+field rather than the WFDF geometry this targets anyway.
+
 **Known constraint (from the person, not yet re-verified against this
 footage): brick marks aren't painted on most fields**, especially
 recreational/coned ones — same unreliability class as the near-back corners.

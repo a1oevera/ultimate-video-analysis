@@ -404,23 +404,30 @@ def _label_at(i):
     return f"({(t.p1[0] + t.p2[0]) / 2:.0f},{(t.p1[1] + t.p2[1]) / 2:.0f})"
 
 
+# The candidate table prints ALWAYS, not only when no assignment was given.
+# MEASURED the hard way: cross-referencing an assignment against a table you
+# cannot see -- by reconstructing the ordering in your head -- is how an
+# off-by-one sent a whole round of analysis onto the wrong line, and the
+# person had to say "it is nowhere near the arc" before it was caught. If you
+# are passing --assign, you especially need to see what those numbers mean.
+family_a, family_b, vp = group_by_vanishing_point(tracked)
+family_of = {}
+for t in family_a:
+    family_of[id(t)] = "A"
+for t in family_b:
+    family_of[id(t)] = "B"
+print(f"\n{len(tracked)} candidate lines (tracked across "
+      f"{payload['n_frames_in_segment']} frames of the pan):")
+print(f"  {'idx':>3} {'dir':>3} {'paint':>6} {'seen':>7} {'support':>8} {'rms':>6} {'arc':>5} "
+      f"{'label at (canvas)':>18}  endpoints (segment reference px)")
+for i, t in enumerate(tracked):
+    print(f"  {i:>3} {family_of.get(id(t), '?'):>3} {t.colour:>6} "
+          f"{t.n_frames:>3}/{payload['n_frames_in_segment']:<3} {t.total_support_px:>8} "
+          f"{t.rms_fit_px:>6.2f} {arc_frac[i]:>5.0%} "
+          f"{_label_at(i):>18}  ({t.p1[0]:8.0f},{t.p1[1]:7.0f}) -> "
+          f"({t.p2[0]:8.0f},{t.p2[1]:7.0f})")
+
 if not assignments and not manual_lines and not corners:
-    family_a, family_b, vp = group_by_vanishing_point(tracked)
-    family_of = {}
-    for t in family_a:
-        family_of[id(t)] = "A"
-    for t in family_b:
-        family_of[id(t)] = "B"
-    print(f"\n{len(tracked)} candidate lines (tracked across "
-          f"{payload['n_frames_in_segment']} frames of the pan):")
-    print(f"  {'idx':>3} {'dir':>3} {'paint':>6} {'seen':>7} {'support':>8} {'rms':>6} {'arc':>5} "
-          f"{'label at (canvas)':>18}  endpoints (segment reference px)")
-    for i, t in enumerate(tracked):
-        print(f"  {i:>3} {family_of.get(id(t), '?'):>3} {t.colour:>6} "
-              f"{t.n_frames:>3}/{payload['n_frames_in_segment']:<3} {t.total_support_px:>8} "
-              f"{t.rms_fit_px:>6.2f} {arc_frac[i]:>5.0%} "
-              f"{_label_at(i):>18}  ({t.p1[0]:8.0f},{t.p1[1]:7.0f}) -> "
-              f"({t.p2[0]:8.0f},{t.p2[1]:7.0f})")
     print("  'paint' is the marking's own colour -- on a multi-sport field this is often the")
     print("  fastest way to tell lines apart (e.g. a blue sideline vs white endzone paint).")
     print("  'dir' A/B are the two real-world directions (shared vanishing point). A valid")
@@ -633,6 +640,13 @@ if calib is None:
         image_path=f"{video_path} t={start_sec:.0f}-{start_sec + duration_sec:.0f}s "
                     f"(field_lines proposal, human-labelled)",
         line_image_points=[list(l.points) for l in lines],
+        # WITHOUT THIS the calibration records no source frames, and
+        # run_metrics_test.py cannot tell which registered segment it belongs
+        # to -- it exits with "none of the calibration's source frames
+        # registered in this window". Every calibration this tool produced
+        # before now was unusable downstream for exactly that reason. A
+        # manual (--line) line contributes no frames, hence the `or None`.
+        line_frame_indices=[list(l.frame_indices) or None for l in lines],
         line_field_edges=edges, cfg=cfg)
   except ValueError as exc:
     sys.exit(f"\nFIT REFUSED: {exc}")

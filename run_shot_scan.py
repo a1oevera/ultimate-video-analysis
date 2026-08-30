@@ -25,10 +25,14 @@ Run:  python run_shot_scan.py <video_path> [sample_every_sec] [max_minutes] [sta
 Needs opencv-python.
 """
 import sys
+import os
 import time
 import cv2
 from frisbee_analysis import MosaicConfig, register_pair, looks_like_field_view
 from frisbee_analysis.video_overlays import overlay_boxes_for
+
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/shot_scan", exist_ok=True)
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/videoplayback.mp4"
 sample_every_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 5.0
@@ -118,9 +122,9 @@ for i, c in enumerate(clusters):
     times = ", ".join(f"{int(t//60)}:{t%60:04.1f}" for t in c["members"][:6])
     more = f" (+{len(c['members'])-6} more)" if len(c["members"]) > 6 else ""
     print(f"  cluster {i}: {len(c['members'])} segment(s) -- first seen at {times}{more}")
-    cv2.imwrite(f"outputs/shot_cluster_{i}.jpg", c["frame"])
+    cv2.imwrite(f"outputs/shot_scan/shot_cluster_{i}.jpg", c["frame"])
 
 print(f"\nTotal: {time.time()-t0:.0f}s. Saved one representative frame per cluster to "
-      f"outputs/shot_cluster_*.jpg -- worth eyeballing before assuming they're all real "
+      f"outputs/shot_scan/shot_cluster_*.jpg -- worth eyeballing before assuming they're all real "
       f"gameplay shots (some could be ads/crowd/replays, same caveat as everything else "
       f"in this project).")

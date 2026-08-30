@@ -9,17 +9,21 @@ Run:  python run_tracking_test.py <video_path> <start_sec> <duration_sec> [sampl
 Needs opencv-python + ultralytics + supervision (Track B deps).
 """
 import sys
+import os
 import warnings
 import cv2
 import numpy as np
 import supervision as sv
 from ultralytics import YOLO
 
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/samples", exist_ok=True)
+
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/ojuc.mp4"
 start_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 320.0
 duration_sec = float(sys.argv[3]) if len(sys.argv) > 3 else 15.0
 sample_fps = float(sys.argv[4]) if len(sys.argv) > 4 else 8.0
-out_path = sys.argv[5] if len(sys.argv) > 5 else "outputs/tracking_sample.jpg"
+out_path = sys.argv[5] if len(sys.argv) > 5 else "outputs/samples/tracking_sample.jpg"
 
 cap = cv2.VideoCapture(video_path)
 video_fps = cap.get(cv2.CAP_PROP_FPS)

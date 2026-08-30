@@ -30,6 +30,9 @@ from frisbee_analysis.mosaic import register_pair_with_coverage
 from frisbee_analysis.field_lines import detect_line_segments, LineConfig
 from frisbee_analysis.video_overlays import overlay_boxes_for
 
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/transfer", exist_ok=True)
+
 video = sys.argv[1] if len(sys.argv) > 1 else "videos/torovcanyon.mp4"
 source_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 3600.0
 step_sec = float(sys.argv[3]) if len(sys.argv) > 3 else 5.0
@@ -110,11 +113,34 @@ def walk(sign):
             break
         Hs, n_in, cov = register_pair_with_coverage(cur, prev, mcfg)
         if Hs is None or n_in < mcfg.min_inliers:
-            rows.append({"t": t, "step": k, "ok": False, "inliers": int(n_in or 0),
-                         "coverage": float(cov or 0.0)})
-            print(f"  t={t:7.0f}s step {k:3d}: REGISTRATION FAILED "
-                  f"({n_in} inliers) -- chain ends here", flush=True)
-            break
+            # A single unregisterable frame is a local problem -- motion blur, a
+            # player filling the frame, a hard cut -- not the end of the camera's
+            # continuity. MEASURED: the first backward walk covered 161 steps and
+            # then stopped dead at ONE failure, 1050s short of the framing that
+            # shows the other endzone, which links fine to almost every other
+            # part of the video. Stepping over the bad frame recovers the chain.
+            bridged = False
+            for skip in (2, 3, 4, 6, 8):
+                t2 = source_sec + sign * step_sec * (k + skip - 1)
+                if t2 < 0 or t2 > total_sec - 1:
+                    break
+                alt = grab(t2)
+                if alt is None:
+                    continue
+                Hs2, n2, cov2 = register_pair_with_coverage(alt, prev, mcfg)
+                if Hs2 is not None and n2 >= mcfg.min_inliers:
+                    print(f"  t={t:7.0f}s step {k:3d}: {n_in} inliers -- SKIPPED "
+                          f"{skip - 1} frame(s), resumed at t={t2:.0f}s ({n2} inliers)",
+                          flush=True)
+                    cur, Hs, n_in, cov, t = alt, Hs2, n2, cov2, t2
+                    bridged = True
+                    break
+            if not bridged:
+                rows.append({"t": t, "step": k, "ok": False, "inliers": int(n_in or 0),
+                             "coverage": float(cov or 0.0)})
+                print(f"  t={t:7.0f}s step {k:3d}: REGISTRATION FAILED ({n_in} inliers) "
+                      f"and no bridge within 8 frames -- chain ends here", flush=True)
+                break
         H_acc = Hs @ H_acc
         segs = detect_line_segments(cur, None, boxes, lcfg, None, frame_idx=k)
         row = {"t": t, "step": k, "ok": True, "inliers": int(n_in),
@@ -151,6 +177,6 @@ for sign, label in (((-1), "BACKWARD"), ((1), "FORWARD")):
     out[label.lower()] = walk(sign)
 cap.release()
 os.makedirs("outputs", exist_ok=True)
-with open("outputs/line_transfer.json", "w") as f:
+with open("outputs/transfer/line_transfer.json", "w") as f:
     json.dump(out, f)
-print("\nwrote outputs/line_transfer.json")
+print("\nwrote outputs/transfer/line_transfer.json")

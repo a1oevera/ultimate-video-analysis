@@ -11,13 +11,17 @@ Run:  python run_finetune_compare_test.py <video_path> <t_sec> [finetuned_pt] [o
 Needs opencv-python + ultralytics.
 """
 import sys
+import os
 import cv2
 from ultralytics import YOLO
+
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/samples", exist_ok=True)
 
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/videoplayback.mp4"
 t_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 1170.0
 finetuned_pt = sys.argv[3] if len(sys.argv) > 3 else "runs/detect/frisbee_finetune/weights/best.pt"
-out_prefix = sys.argv[4] if len(sys.argv) > 4 else "outputs/finetune_compare"
+out_prefix = sys.argv[4] if len(sys.argv) > 4 else "outputs/samples/finetune_compare"
 
 cap = cv2.VideoCapture(video_path)
 fps = cap.get(cv2.CAP_PROP_FPS)

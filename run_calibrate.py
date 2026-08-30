@@ -72,6 +72,7 @@ what you want to click is in a smaller segment next to a bigger one.
 Needs opencv-python (Track B deps, see requirements.txt).
 """
 import sys
+import os
 import cv2
 import numpy as np
 from frisbee_analysis import UltimatePitchConfiguration, MosaicConfig, register_sequence
@@ -84,11 +85,14 @@ from frisbee_analysis.field_lines import projected_field_is_sane
 from frisbee_analysis.calibration_bank import add_entry as add_bank_entry
 from frisbee_analysis.video_overlays import overlay_boxes_for
 
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/calibration", exist_ok=True)
+
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/ojuc.mp4"
 start_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 1580.0
 duration_sec = float(sys.argv[3]) if len(sys.argv) > 3 else 180.0
 sample_fps = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0
-out_path = sys.argv[5] if len(sys.argv) > 5 else "outputs/calibration.json"
+out_path = sys.argv[5] if len(sys.argv) > 5 else "outputs/calibration/calibration.json"
 
 cap = cv2.VideoCapture(video_path)
 if not cap.isOpened():

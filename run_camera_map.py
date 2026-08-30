@@ -43,6 +43,9 @@ from frisbee_analysis.mosaic import register_pair_with_coverage
 from frisbee_analysis.calibration import Calibration, pixel_to_field
 from frisbee_analysis.video_overlays import overlay_boxes_for
 
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/mosaic", exist_ok=True)
+
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/torovcanyon.mp4"
 sample_every = float(sys.argv[2]) if len(sys.argv) > 2 else 5.0
 max_minutes = float(sys.argv[3]) if len(sys.argv) > 3 else 0.0
@@ -187,9 +190,9 @@ out = {"video": video_path, "sample_every_sec": sample_every,
         "n_segments": len(by_seg), "n_linked": len(to_global),
         "root_segment": root, "samples": rows}
 os.makedirs("outputs", exist_ok=True)
-with open("outputs/camera_map.json", "w") as f:
+with open("outputs/mosaic/camera_map.json", "w") as f:
     json.dump(out, f)
-print("wrote outputs/camera_map.json")
+print("wrote outputs/mosaic/camera_map.json")
 
 # ---- picture of the sweep ----------------------------------------------
 if rows:
@@ -203,8 +206,8 @@ if rows:
         pts = ((np.array(r["corners"]) - lo) * scale + 10).astype(np.int32)
         shade = int(40 + 200 * n / max(1, len(rows) - 1))
         cv2.polylines(canvas, [pts], True, (shade, 120, 255 - shade), 1)
-    cv2.imwrite("outputs/camera_map.jpg", canvas)
-    print(f"wrote outputs/camera_map.jpg ({W}x{H}) -- every sampled framing, "
+    cv2.imwrite("outputs/mosaic/camera_map.jpg", canvas)
+    print(f"wrote outputs/mosaic/camera_map.jpg ({W}x{H}) -- every sampled framing, "
           f"blue=start of video, red=end")
     print(f"total swept extent in global px: {hi[0]-lo[0]:.0f} x {hi[1]-lo[1]:.0f} "
           f"(one frame is {frame_w}x{frame_h})")

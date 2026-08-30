@@ -26,7 +26,7 @@ USAGE -- two steps.
   1. Detect (slow: registers the window, same cost as run_mosaic_test.py):
        python3 run_field_lines_propose.py videos/torovcanyon.mp4 3945 60
 
-     Writes outputs/field_lines_candidates.jpg with every candidate line
+     Writes outputs/line_detection/field_lines_candidates.jpg with every candidate line
      drawn and numbered, prints a table, and caches the result so step 2 is
      instant. LOOK AT THE IMAGE. Only label a line you can see paint under.
 
@@ -50,7 +50,7 @@ USAGE -- two steps.
        ... --assign 0=1,7 1=3,4 --line 2,8=1546,377,2100,880
 
      Coordinates are CANVAS pixels, read straight off the 100px grid in
-     outputs/field_lines_grid.jpg. MEASURED (results/field_lines_finding.md
+     outputs/line_detection/field_lines_grid.jpg. MEASURED (results/field_lines_finding.md
      Result 3.25): on t=3600+60s the detector found the blue near sideline
      and the goal line but produced NO candidate on the far sideline, which
      is plainly visible to a person. Without --line the window is dead: you
@@ -90,6 +90,11 @@ from frisbee_analysis.calibration import (fit_calibration, fit_calibration_with_
                                           field_validity_region)
 from frisbee_analysis.video_overlays import overlay_boxes_for
 
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/calibration", exist_ok=True)
+os.makedirs("outputs/field_model", exist_ok=True)
+os.makedirs("outputs/line_detection", exist_ok=True)
+
 EDGE_NAMES = {(1, 7): "left sideline", (2, 8): "right sideline",
               (1, 2): "near back line", (3, 4): "NEAR GOAL LINE (endzone)",
               (5, 6): "FAR GOAL LINE (endzone)", (7, 8): "far back line",
@@ -107,7 +112,7 @@ CACHE_DIR = "outputs/field_lines_cache"
 
 
 def parse_args(argv):
-    positional, assignments, out_path = [], {}, "outputs/calibration_from_lines.json"
+    positional, assignments, out_path = [], {}, "outputs/calibration/calibration_from_lines.json"
     sideline_colour = None
     manual = []
     max_lines, min_frames = 12, 3
@@ -133,7 +138,7 @@ def parse_args(argv):
             continue
         if token == "--corner":
             # A FIELD VERTEX given directly as a pixel, in canvas coords off
-            # outputs/field_lines_grid.jpg. Four of these fit a homography on
+            # outputs/line_detection/field_lines_grid.jpg. Four of these fit a homography on
             # their own through the points-only path, which is the one
             # validated exactly correct in results/calibration_finding.md --
             # no line labelling, no gate stack, no ranking.
@@ -456,7 +461,7 @@ if not assignments and not manual_lines and not corners:
                                     - (-(lb[0] * frame_w + lb[2]) / lb[1]))
                         print(f"        [{a}] vs [{b}]: {gap0:5.0f}px apart at x=0, "
                               f"{gap1:5.0f}px at x={frame_w}")
-            path = f"outputs/field_lines_confusable_{n}.jpg"
+            path = f"outputs/line_detection/field_lines_confusable_{n}.jpg"
             cv2.imwrite(path, draw_extended(label_image, [label_lines[i] for i in group],
                                              [f"line {i}" for i in group]))
             print(f"        -> {path}")
@@ -487,9 +492,9 @@ if not assignments and not manual_lines and not corners:
         cv2.line(grid, (0, gy), (gw, gy), (200, 200, 200), 1)
         for gc, gt in (((0, 0, 0), 4), ((255, 255, 255), 1)):
             cv2.putText(grid, str(gy), (3, gy - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, gc, gt)
-    cv2.imwrite("outputs/field_lines_grid.jpg", grid)
+    cv2.imwrite("outputs/line_detection/field_lines_grid.jpg", grid)
 
-    candidates_path = "outputs/field_lines_candidates.jpg"
+    candidates_path = "outputs/line_detection/field_lines_candidates.jpg"
     cv2.imwrite(candidates_path, annotated)
     print(f"\nWrote {candidates_path} -- OPEN IT.")
     if canvas_T is not None:
@@ -502,7 +507,7 @@ if not assignments and not manual_lines and not corners:
         print("  (no pan canvas in this cache -- re-run step 1 to rebuild it.) Lines drawn")
         print("  off the edge were seen on other frames of the pan; still valid, just not")
         print("  visible here.")
-    print("Also wrote outputs/field_lines_grid.jpg -- the same image with a 100px grid.")
+    print("Also wrote outputs/line_detection/field_lines_grid.jpg -- the same image with a 100px grid.")
     print("  If a line you can SEE has no candidate on it, read two points off that grid")
     print("  and pass them directly, e.g.:  --line 2,8=1546,377,2100,880")
 
@@ -538,9 +543,9 @@ if not assignments and not manual_lines and not corners:
                 print(f"      {l.name:16s} {l.source:9s} {l.visibility:8s} {l.colour:6s} "
                       f"residual={residual}")
             print(f"      --assign {pairs}")
-        cv2.imwrite("outputs/field_model_auto.jpg",
+        cv2.imwrite("outputs/field_model/field_model_auto.jpg",
                     draw_field_model(reference_frame, models[0], cfg))
-        print("\n  Top model drawn to outputs/field_model_auto.jpg "
+        print("\n  Top model drawn to outputs/field_model/field_model_auto.jpg "
               "(solid = observed paint, dashed = estimated from WFDF geometry).")
     else:
         print("No field model survived the geometry checks. That is a real answer: either this")

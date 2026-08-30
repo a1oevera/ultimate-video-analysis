@@ -20,12 +20,16 @@ Run:  python run_cone_detect_test.py <video_path> [n_samples] [out.jpg]
 Needs opencv-python.
 """
 import sys
+import os
 import cv2
 import numpy as np
 
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/samples", exist_ok=True)
+
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/videoplayback.mp4"
 n_samples = int(sys.argv[2]) if len(sys.argv) > 2 else 20
-out_path = sys.argv[3] if len(sys.argv) > 3 else "outputs/cone_detect_sample.jpg"
+out_path = sys.argv[3] if len(sys.argv) > 3 else "outputs/samples/cone_detect_sample.jpg"
 
 # WFDF/broadcast cones are typically a saturated orange -- wide-ish hue band
 # (some cones lean more red-orange, some more yellow-orange) but always high

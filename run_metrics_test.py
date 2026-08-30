@@ -46,6 +46,7 @@ Run:  python run_metrics_test.py <video_path> <calib.json> <start_sec> <duration
 Needs opencv-python + ultralytics + supervision (Track B deps).
 """
 import sys
+import os
 import warnings
 import cv2
 import numpy as np
@@ -56,12 +57,16 @@ from frisbee_analysis.calibration import (Calibration, pixel_to_field, is_in_fie
                                           is_measurable, field_validity_region)
 from frisbee_analysis.video_overlays import overlay_boxes_for
 
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/calibration", exist_ok=True)
+os.makedirs("outputs/samples", exist_ok=True)
+
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/videoplayback.mp4"
-calib_path = sys.argv[2] if len(sys.argv) > 2 else "outputs/calibration.json"
+calib_path = sys.argv[2] if len(sys.argv) > 2 else "outputs/calibration/calibration.json"
 start_sec = float(sys.argv[3]) if len(sys.argv) > 3 else 1158.0
 duration_sec = float(sys.argv[4]) if len(sys.argv) > 4 else 12.0
 sample_fps = float(sys.argv[5]) if len(sys.argv) > 5 else 3.0
-out_path = sys.argv[6] if len(sys.argv) > 6 else "outputs/metrics_sample.jpg"
+out_path = sys.argv[6] if len(sys.argv) > 6 else "outputs/samples/metrics_sample.jpg"
 
 calib = Calibration.load(calib_path)
 cfg = UltimatePitchConfiguration()

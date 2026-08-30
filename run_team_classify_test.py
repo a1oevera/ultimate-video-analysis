@@ -29,13 +29,17 @@ Run:  python run_team_classify_test.py <video_path> <t_sec> [out.jpg]
 Needs opencv-python + ultralytics (Track B deps).
 """
 import sys
+import os
 import cv2
 import numpy as np
 from ultralytics import YOLO
 
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/samples", exist_ok=True)
+
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/ojuc.mp4"
 t_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 320.0
-out_path = sys.argv[3] if len(sys.argv) > 3 else "outputs/team_classify_sample.jpg"
+out_path = sys.argv[3] if len(sys.argv) > 3 else "outputs/samples/team_classify_sample.jpg"
 
 cap = cv2.VideoCapture(video_path)
 fps = cap.get(cv2.CAP_PROP_FPS)

@@ -44,6 +44,9 @@ from frisbee_analysis.calibration_bank import try_auto_calibrate
 from frisbee_analysis.video_overlays import overlay_boxes_for
 from frisbee_analysis.field_lines import SIDELINE_EDGES, CROSS_EDGES, projected_field_is_sane
 
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/line_detection", exist_ok=True)
+
 video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/torovcanyon.mp4"
 start_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 3945.0
 duration_sec = float(sys.argv[3]) if len(sys.argv) > 3 else 20.0
@@ -98,7 +101,7 @@ print(f"  playing surface                : {surface_frac * 100:5.1f}% of frame, 
 print(f"  white-paint ridge pixels        : {float((ridge > 0).mean()) * 100:5.2f}% of frame")
 print(f"  scene-aware, merged             : {len(scene_aware):5d} lines "
       f"({100 * (1 - len(scene_aware) / max(n_naive, 1)):.0f}% fewer things to reason about)")
-cv2.imwrite("outputs/field_lines_surface.jpg",
+cv2.imwrite("outputs/line_detection/field_lines_surface.jpg",
             draw_detections(probe, surface, scene_aware))
 
 # --------------------------------------------------------------------------
@@ -224,7 +227,7 @@ else:
                   f"{best_d:8.1f}px, angle diff {best_angle:5.1f} deg{flag}")
     # unclipped on purpose: this image exists to SHOW the fold, so it must
     # not be the honest view that hides everything past the horizon
-    cv2.imwrite("outputs/field_lines_groundtruth.jpg",
+    cv2.imwrite("outputs/line_detection/field_lines_groundtruth.jpg",
                 draw_field_overlay(frames[reference_idx], gt_calib,
                                    clip_to_validity=False))
 
@@ -258,7 +261,7 @@ else:
               f"max reproj {p['max_reproj_px']:.2f}px, mean {p['mean_reproj_px']:.2f}px, "
               f"cone hits {p['cone_hits']}/8  [{determined}]")
     best = proposals[0]["calibration"]
-    cv2.imwrite("outputs/field_lines_proposal.jpg",
+    cv2.imwrite("outputs/line_detection/field_lines_proposal.jpg",
                 draw_field_overlay(frames[reference_idx], best))
     if gt_calib is not None and not projected_field_is_sane(gt_calib, cfg):
         print("  (skipping the vs-ground-truth comparison: that ground truth is a bowtie, "

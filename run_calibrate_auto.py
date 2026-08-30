@@ -40,7 +40,7 @@ video_path = sys.argv[1] if len(sys.argv) > 1 else "videos/videoplayback.mp4"
 start_sec = float(sys.argv[2]) if len(sys.argv) > 2 else 1158.0
 duration_sec = float(sys.argv[3]) if len(sys.argv) > 3 else 180.0
 sample_fps = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0
-out_path = sys.argv[5] if len(sys.argv) > 5 else "outputs/calibration_auto.json"
+out_path = sys.argv[5] if len(sys.argv) > 5 else "outputs/calibration/calibration_auto.json"
 segment_choice = sys.argv[6] if len(sys.argv) > 6 else None
 bank_dir = sys.argv[7] if len(sys.argv) > 7 else "outputs/calibration_bank"
 
@@ -98,7 +98,7 @@ if calib is None:
           f"hasn't been calibrated before (or the bank is empty).")
     print(f"Fall back to manual calibration:")
     print(f"  python run_calibrate.py {video_path} {start_sec:.0f} {duration_sec:.0f} "
-          f"{sample_fps} outputs/calibration.json {seg_id}")
+          f"{sample_fps} outputs/calibration/calibration.json {seg_id}")
     print(f"That will automatically add this framing to the bank, so future segments like "
           f"it won't need manual clicks again.")
     sys.exit(0)
@@ -134,6 +134,9 @@ if calib.source_max_reprojection_px is not None:
 # every match rather than trusting whatever went into the bank.
 from frisbee_analysis.field_lines import projected_field_is_sane
 from frisbee_analysis.calibration import field_in_front_of_camera
+
+# outputs are filed into folders; make sure ours exist
+os.makedirs("outputs/calibration", exist_ok=True)
 if not field_in_front_of_camera(calib):
     print(f"\n  *** WARNING: this auto-matched calibration puts part of the field BEHIND the "
           f"camera -- the horizon cuts through the playing surface. The bank canvas it came "

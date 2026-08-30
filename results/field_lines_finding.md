@@ -1828,3 +1828,68 @@ points from merged clusters, and takes the window under the 20px bank-ready
 threshold it previously failed. Note the candidate INDICES change (1/4/7/11
 -> 1/4/6/14), so any assignment recorded before this change must be re-read
 off the table rather than reused.
+
+---
+
+## Result 3.30: labels transfer between framings; geometry does not
+
+**The person:** *"is there not a way to frame by frame reference the camera
+movement and then map on the known lines to the new frame"*.
+
+Yes, and it is the first thing in this whole investigation that generalises.
+
+**Single hop, validated against independent evidence.** Registering t=3600
+against t=3235 (335 ORB inliers) and pushing the four human-confirmed lines
+through, then checking each against lines the t=3235 window had detected *by
+itself*:
+
+| transferred line | matched | angle | offset |
+|---|---|---:|---:|
+| goal line | cand 0 (136 pts) | 0.6 deg | 10px |
+| far sideline | cand 2 (62 pts) | 1.6 deg | 3px |
+| end line | cand 8 (35 pts) | 1.8 deg | 9px |
+| near sideline | -- | 10.0 deg | 707px |
+
+This is not self-consistency: the destination window found those lines on its
+own, and the transfer says which is which. It also CORRECTS the auto-ranker,
+which had proposed cand 0 as a sideline and cand 2 as the goal line -- the
+labelling the person rejected on sight.
+
+Fitting t=3235 from those three plus the transferred near sideline puts every
+line where it belongs: near sideline y=-0.0..0.0, far sideline y=35.3..38.2
+(want 37), goal line x=16.8..20.0 (want 18), end line x=-1.4..1.5 (want 0).
+The equivalent check at t=3600 had the far sideline landing at y=10.9..15.4
+instead of 37.
+
+**Full walk (`run_line_transfer.py`).** 368 steps of 5s from t=3600, reaching
+t=2795..4635s -- 1840 seconds, 31 minutes, from ONE labelling. Only 2
+registration failures in 368 steps.
+
+| line | median offset | within 30px | no match at all |
+|---|---:|---:|---:|
+| goal line | 16-43px | 47-57% | 2-5 steps |
+| far sideline | 23-34px | 46-61% | 2 steps |
+| end line | 62-79px | 23-25% | 2-5 steps |
+| near sideline | **208-636px** | 13-29% | **16-68 steps** |
+
+**The near sideline cannot be carried**, exactly as the person predicted:
+*"perfectly possible for the near sideline to be off screen or for the angle
+to change very drastically considering how close it is to the camera"*. It
+swings hardest and leaves frame most often.
+
+**Degradation is not drift.** Offsets hold at 1px for 40 steps, jump to a
+median 136px over steps 41-50 where inliers collapse to 302, then RECOVER to
+12px. A bad patch is a per-frame registration problem and can be routed
+around; accumulated drift could not recover.
+
+**Therefore: transfer for IDENTITY, local detection for GEOMETRY.** A single
+hop disagrees with the frame-by-frame chain by 40px mean / 72px max -- ample
+to say "that is the goal line", far too loose to fit a calibration from.
+
+**A measurement retracted along the way.** I scored "paint support" under the
+transferred lines, got 0-8% against a 4% random baseline, and nearly concluded
+that ORB was aligning the treeline rather than the ground plane. The control
+then showed the SAME lines scoring 0-8% in their own window -- including the
+goal line, a confirmed bright marking with 102 detected points on it. The
+metric was broken; the conclusion is withdrawn. Always run the instrument on a
+case whose answer is known before believing it on one that is not.

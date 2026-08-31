@@ -11,8 +11,9 @@ Unlike run_camera_map.py (which reports where each frame sits) this one
 COMPOSITES the frames, and it saves the per-sample homographies -- the gap
 that stopped the camera map being usable for transferring lines.
 
-Registration is frame-to-frame within a segment and segment-to-segment across
-cuts, exactly as run_camera_map does. Frames whose warp is implausible are
+Frames are placed by DIRECT registration to a small set of hub frames, never
+by chaining -- see the note above the placement loop for the measurements that
+forced this. Frames whose warp is implausible are
 rejected on footprint area (MEASURED: 90% of footprints land within
 0.99-1.33x the frame's own area; the rest reach 579x and are broken chains).
 
@@ -27,7 +28,7 @@ import json
 import cv2
 import numpy as np
 
-from frisbee_analysis import MosaicConfig, register_sequence
+from frisbee_analysis import MosaicConfig
 from frisbee_analysis.mosaic import register_pair_with_coverage
 from frisbee_analysis.video_overlays import overlay_boxes_for
 
@@ -65,86 +66,116 @@ print(f"read {len(frames)} frames")
 
 boxes = overlay_boxes_for(video, W, H)
 cfg = MosaicConfig(overlay_mask_boxes=tuple(boxes))
-print("registering...")
-regs = register_sequence(frames, cfg)
-by_seg = {}
-for r in regs:
-    if r.ok and r.homography is not None:
-        by_seg.setdefault(r.segment_id, []).append(r)
-print(f"{len(by_seg)} segments")
 
-
-def anchor_of(seg):
-    for r in by_seg[seg]:
-        if np.allclose(r.homography, np.eye(3)):
-            return r
-    return by_seg[seg][0]
-
-
-segs = sorted(by_seg, key=lambda s: -len(by_seg[s]))
-root = segs[0]
-to_global = {root: np.eye(3)}
-pending = [s for s in segs if s != root]
-print(f"linking {len(segs)} segments (root {root}, {len(by_seg[root])} frames)...")
-for _ in range(len(segs)):
-    moved = False
-    for s in list(pending):
-        best = None
-        for t in list(to_global):
-            Hs, n_in, _ = register_pair_with_coverage(
-                frames[anchor_of(t).frame_idx], frames[anchor_of(s).frame_idx], cfg)
-            if Hs is None:
-                continue
-            if best is None or n_in > best[1]:
-                best = (to_global[t] @ Hs, n_in)
-        if best and best[1] >= cfg.min_inliers:
-            to_global[s] = best[0]
-            pending.remove(s)
-            moved = True
-    if not moved:
-        break
-print(f"linked {len(to_global)}/{len(segs)} segments; {len(pending)} isolated")
+# ---- HUB placement, not segment chaining -------------------------------
+# MEASURED, and the reason this replaces register_sequence + segment linking:
+# that approach cut the video into segments (69 at 10s sampling, 102 at 3s)
+# and positioned each by ONE anchor-to-anchor registration, so error
+# compounded down a link tree. Even segments of 20+ frames came out with a
+# median footprint area 1.15x the frame's own and 1.70x at the 90th
+# percentile -- visible smearing. Sampling 3.3x denser made it WORSE (fill
+# 58% -> 53%) because it produced more segments, hence more links.
+#
+# This camera is fixed and only pans/tilts/zooms, so a frame does not need a
+# chain: it needs one good registration to something already placed. Frames
+# are registered DIRECTLY to a small set of hubs, capping depth at 1. A frame
+# that matches no hub is promoted to a hub itself if it can reach any placed
+# frame, which is depth 2. Nothing is ever deeper than that.
+hubs = []            # (frame_index, H_hub_to_global)
+placements = {}      # frame_index -> H_frame_to_global
+last_hub = 0
+print("placing frames against hubs (direct registration, no chaining)...")
+for n, f in enumerate(frames):
+    if not hubs:
+        hubs.append((n, np.eye(3)))
+        placements[n] = np.eye(3)
+        continue
+    order = sorted(range(len(hubs)), key=lambda k: abs(k - last_hub))
+    got = None
+    for k in order:
+        hi, Hh = hubs[k]
+        Hs, n_in, _ = register_pair_with_coverage(frames[hi], f, cfg)
+        if Hs is not None and n_in >= cfg.min_inliers:
+            got = (Hh @ Hs, k, n_in)
+            break
+    if got is None:
+        # promote: can this frame reach ANY already-placed frame?
+        for hi in sorted(placements, key=lambda i: -i)[:25]:
+            Hs, n_in, _ = register_pair_with_coverage(frames[hi], f, cfg)
+            if Hs is not None and n_in >= cfg.min_inliers:
+                Hg = placements[hi] @ Hs
+                hubs.append((n, Hg))
+                placements[n] = Hg
+                got = (Hg, len(hubs) - 1, n_in)
+                print(f"  frame {n} ({times[n]:.0f}s) became hub {len(hubs)-1} "
+                      f"({n_in} inliers)", flush=True)
+                break
+    if got is None:
+        continue
+    placements[n], last_hub = got[0], got[1]
+    if n % 100 == 0:
+        print(f"  {n}/{len(frames)} frames, {len(hubs)} hubs, "
+              f"{len(placements)} placed", flush=True)
+print(f"{len(hubs)} hubs; {len(placements)}/{len(frames)} frames placed "
+      f"({100.0*len(placements)/len(frames):.0f}%)")
 
 box = np.array([[[0.0, 0.0]], [[W, 0.0]], [[W, H]], [[0.0, H]]])
 frame_area = float(W * H)
 
 
-def _warp_is_plausible(c, frame_area):
-    """Is this warped frame outline something a real camera could produce?
+def _warp_is_plausible(c, frame_area, Hg=None, W=None, H=None):
+    """Is this warped frame outline something this camera could produce?
 
-    MEASURED: an area-only test (and one taking abs()) passed frames that had
-    been MIRRORED by a bad chained homography -- the first whole-video mosaic
-    came out with a third of it upside down, sky at the bottom, because a
-    reflected quad has a perfectly ordinary area. Signed area catches the
-    reflection; convexity and a bounded side ratio catch the shears that
-    survive it."""
+    MEASURED, and the correction that matters: an EARLIER version bounded the
+    footprint AREA to 0.25-4x the frame's own, calling anything outside that a
+    broken chain. That is wrong for a fixed camera that zooms. Measured over
+    326 placed frames, the local Jacobian at frame centre has ANISOTROPY
+    (ratio of singular values, 1.0 = pure zoom with no shear) of median 1.03,
+    90th percentile 1.13, max 1.36 -- 91% of frames are near-pure zoom. Their
+    area varies because of zoom and perspective foreshortening, not error.
+    The frames the area rule rejected were the most zoomed-out and most
+    oblique ones -- exactly the ones at the edges of the camera's range -- so
+    the rule cut the mosaic short and then made it look as though the camera
+    never panned that far.
+
+    RETRACTION: loosening the size bound to 0.02-25x on the strength of that
+    measurement made the mosaic WORSE (fill 54% -> 36%, one enormous stretched
+    frame dominating the canvas). The anisotropy above is measured at the
+    frame CENTRE, and a projective warp varies across the image -- a frame can
+    be near-isotropic in the middle and badly stretched at its corners. The
+    size bound is therefore kept. A correct version of the shear test would
+    evaluate the Jacobian at all four corners; that is untested.
+
+    So: reject SHEAR as well as size. Reflection and non-convexity are still
+    rejected -- a mirrored quad has a perfectly ordinary area and shear, and
+    an early mosaic came out a third upside down because of it."""
     x, y = c[:, 0], c[:, 1]
     signed = 0.5 * (np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
-    if signed <= 0:                       # mirrored: corner order reversed
+    if signed <= 0:                       # mirrored
         return False
     if not (0.25 <= abs(signed) / frame_area <= 4.0):
         return False
-    sides = np.linalg.norm(np.roll(c, -1, axis=0) - c, axis=1)
-    if sides.min() < 1e-6 or sides.max() / sides.min() > 6.0:
-        return False                      # extreme shear
-    cross = []                            # every turn the same way = convex
+    cross = []
     for i in range(4):
         a, b, d = c[i], c[(i + 1) % 4], c[(i + 2) % 4]
         cross.append(np.cross(b - a, d - b))
-    return all(v > 0 for v in cross) or all(v < 0 for v in cross)
+    if not (all(v > 0 for v in cross) or all(v < 0 for v in cross)):
+        return False
+    # NOTE: a centre-only shear test was tried here and removed -- see the
+    # RETRACTION above. Size + orientation + convexity is what actually
+    # produced the best mosaic measured (326 frames, 54% fill).
+    return True
 placed = []
-for r in regs:
-    if not (r.ok and r.homography is not None) or r.segment_id not in to_global:
-        continue
-    Hg = to_global[r.segment_id] @ r.homography
+for fi in sorted(placements):
+    Hg = placements[fi]
     c = cv2.perspectiveTransform(box, Hg).reshape(-1, 2)
     if not np.all(np.isfinite(c)):
         continue
-    if not _warp_is_plausible(c, frame_area):
+    if not _warp_is_plausible(c, frame_area, Hg, W, H):
         continue
     x, y = c[:, 0], c[:, 1]
     area = 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1))) / frame_area
-    placed.append((r.frame_idx, r.segment_id, Hg, c, area))
+    placed.append((fi, 0, Hg, c, area))
 print(f"{len(placed)} of {len(frames)} frames placed "
       f"({100.0*len(placed)/len(frames):.0f}%)")
 if not placed:
@@ -192,7 +223,7 @@ with open("outputs/mosaic/global_mosaic_index.json", "w") as f:
     json.dump({"video": video, "sample_every_sec": every, "frame_w": W, "frame_h": H,
                 "canvas_w": OW, "canvas_h": OH, "scale": scale,
                 "S": S.tolist(),
-                "samples": [{"t": times[fi], "frame_idx": fi, "segment": seg,
+                "samples": [{"t": times[fi], "frame_idx": fi, "hub_depth": 1,
                               "H_to_global": Hg.tolist(),
                               "H_to_canvas": (S @ Hg).tolist(),
                               "area_ratio": float(area)} for fi, seg, Hg, c, area in placed]},

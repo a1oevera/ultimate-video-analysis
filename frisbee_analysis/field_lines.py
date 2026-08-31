@@ -1327,11 +1327,18 @@ def segment_pan_polygon(frames: list, registrations: list, segment_id: int = Non
         return []
     if segment_id is None:
         segment_id = max(by_segment, key=lambda s: len(by_segment[s]))
+    # A frame warped through the horizon comes back mirrored and would drag
+    # the hull to absurd coordinates -- the same defect that produced a bowtie
+    # labelling canvas. mosaic.warp_is_plausible rejects those.
+    from .mosaic import warp_is_plausible
     corners = []
     for reg in by_segment.get(segment_id, []):
         h, w = frames[reg.frame_idx].shape[:2]
         box = [(0.0, 0.0), (float(w), 0.0), (float(w), float(h)), (0.0, float(h))]
-        corners.extend(_transform_points(box, reg.homography))
+        pts = _transform_points(box, reg.homography)
+        if not warp_is_plausible(np.asarray(pts, dtype=np.float64), float(w * h)):
+            continue
+        corners.extend(pts)
     if len(corners) < 3:
         return corners
     hull = cv2.convexHull(np.asarray(corners, dtype=np.float32).reshape(-1, 1, 2))

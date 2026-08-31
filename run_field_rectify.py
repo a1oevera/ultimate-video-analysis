@@ -89,10 +89,11 @@ H_field_to_ref = np.linalg.inv(np.asarray(calib.H()))   # calib.H(): pixels -> f
 times = [t for t in np.arange(0, n_frames / fps, every)]
 canvas = np.zeros((OH, OW, 3), np.uint8)
 filled = np.zeros((OH, OW), np.uint8)
+best_q = np.zeros((OH, OW), np.float32)   # coverage of whichever frame owns each pixel
 seen_x = []
 hubs = [(ref_sec, np.eye(3), ref)]     # (time, H_hub_to_ref, cached frame)
 placed = skipped = 0
-last = 0
+last_hub = 0
 # only paint where the calibration is valid AND inside the padded field
 gx, gy = np.meshgrid(np.arange(OW), np.arange(OH))
 fx_cm = (gx - MARGIN_M * ppm) * 100.0 / ppm
@@ -101,34 +102,67 @@ valid_region = (fx_cm <= limit_cm) & (fx_cm >= -MARGIN_M * 100) & \
                (fy_cm >= -MARGIN_M * 100) & (fy_cm <= cfg.width + MARGIN_M * 100)
 print(f"paintable region: {100.0*valid_region.mean():.0f}% of the canvas\n")
 
+# MEASURED, and the reason the first version of this tool drew diagonal
+# sidelines: registration was gated on inlier COUNT alone, discarding the
+# coverage that register_pair_with_coverage returns precisely so it can be
+# gated on. Replaying this loop over torovcanyon.mp4 and recording the
+# discarded value: 135 of 163 accepted frames (83%) had coverage below
+# MosaicConfig.min_coverage=0.15, median 0.096 -- inliers packed into under
+# a tenth of the frame. Some were egregious (t=5190s: 233 inliers, coverage
+# 0.027), which is exactly the high-count/no-spread failure the docstring on
+# register_pair_with_coverage warns about. A homography fit to one clustered
+# patch is fine at that patch and sheared everywhere else, and once composed
+# with the calibration that shear IS the tilt: white paint that should run
+# along the canvas axes came out up to 11 deg off (26 Hough segments over the
+# painted canvas, 10 of them >5 deg), against 1.3-2.6 deg for the reference
+# frame warped through the calibration alone. So the calibration was never
+# the problem; the frames stacked on top of it were.
+STRONG_COVERAGE = 0.30    # ~2x the min_coverage bar; nothing beats this by enough to be worth the search
+
+def best_hub_for(frame):
+    """Keep the BEST hub match, not the first one that clears the bar. The
+    old order (nearest hub index to the last one used) is not a quality
+    ordering at all, so with a bar as low as inliers>=15 the first
+    acceptable hub routinely beat a far better one that was never tried.
+
+    Searching every hub is quadratic once hubs accumulate (this video grows
+    to ~10), so try the last hub that worked first -- consecutive samples
+    usually share a shot -- and stop early on a match well clear of the bar.
+    A frame that only ever finds marginal matches still gets compared
+    against all of them."""
+    best = None
+    for k in sorted(range(len(hubs)), key=lambda k: k != last_hub):
+        _, Hh, hf = hubs[k]
+        Hs, n_in, cov = register_pair_with_coverage(hf, frame, mcfg)
+        if Hs is None or n_in < mcfg.min_inliers or cov < mcfg.min_coverage:
+            continue
+        if best is None or cov > best[2]:
+            best = (Hh @ Hs, k, cov)
+        if cov >= STRONG_COVERAGE:
+            break
+    return best
+
 for n, t in enumerate(times):
     f = grab(t)
     if f is None:
         continue
-    order = sorted(range(len(hubs)), key=lambda k: abs(k - last))
-    got = None
-    for k in order:
-        _, Hh, hf = hubs[k]
-        Hs, n_in, _ = register_pair_with_coverage(hf, f, mcfg)
-        if Hs is not None and n_in >= mcfg.min_inliers:
-            got = (Hh @ Hs, k)
-            break
+    got = best_hub_for(f)
     if got is None:
         # promote this frame to a hub if it can reach any existing one the
         # other way round; keeps depth at 2, never a chain
-        for k in order:
-            _, Hh, hf = hubs[k]
-            Hs, n_in, _ = register_pair_with_coverage(f, hf, mcfg)
-            if Hs is not None and n_in >= mcfg.min_inliers:
+        for k, (_, Hh, hf) in enumerate(hubs):
+            Hs, n_in, cov = register_pair_with_coverage(f, hf, mcfg)
+            if Hs is not None and n_in >= mcfg.min_inliers and cov >= mcfg.min_coverage:
                 Hnew = Hh @ np.linalg.inv(Hs)
                 hubs.append((t, Hnew, f))
-                got = (Hnew, len(hubs) - 1)
-                print(f"  t={t:.0f}s became hub {len(hubs)-1} ({n_in} inliers)", flush=True)
+                got = (Hnew, len(hubs) - 1, cov)
+                print(f"  t={t:.0f}s became hub {len(hubs)-1} "
+                      f"({n_in} inliers, coverage {cov:.2f})", flush=True)
                 break
     if got is None:
         skipped += 1
         continue
-    H_frame_to_ref, last = got
+    H_frame_to_ref, last_hub, quality = got
     # field -> canvas needs field -> ref -> frame
     H_field_to_frame = np.linalg.inv(H_frame_to_ref) @ H_field_to_ref
     H_canvas_to_frame = H_field_to_frame @ np.linalg.inv(F2C)
@@ -136,9 +170,16 @@ for n, t in enumerate(times):
                                   flags=cv2.WARP_INVERSE_MAP)
     cover = cv2.warpPerspective(np.full((H, W), 255, np.uint8), H_canvas_to_frame,
                                  (OW, OH), flags=cv2.WARP_INVERSE_MAP)
-    paint = (cover > 0) & (filled == 0) & valid_region
+    # First-come-first-served painting (the old `filled == 0`) handed the
+    # canvas to whichever frame arrived first, and times start at t=0 -- the
+    # frames FURTHEST from the calibration reference at t=3235s, so the least
+    # trustworthy registrations claimed the canvas and the reference frame
+    # itself got only the leftovers. Let a better-covered registration
+    # overwrite a worse one instead.
+    paint = (cover > 0) & valid_region & (quality > best_q)
     canvas[paint] = warped[paint]
     filled[paint] = 255
+    best_q[paint] = quality
     placed += 1
     if paint.any():
         seen_x.append((fx_cm[paint].min() / 100.0, fx_cm[paint].max() / 100.0))

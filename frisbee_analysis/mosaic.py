@@ -325,6 +325,33 @@ def refine_to_anchor(frames: list, results: list[FrameRegistration], cfg: Mosaic
     return out
 
 
+def warp_is_plausible(corners: np.ndarray, frame_area: float,
+                       min_area: float = 0.25, max_area: float = 4.0) -> bool:
+    """Could a real camera have produced this warped frame outline?
+
+    MEASURED BUG this exists to stop (person, on a labelling canvas): *"it
+    looks like two triangles very stretched i cant see anything"*. A frame
+    whose homography sends it through the horizon comes back MIRRORED -- the
+    corner order reverses -- and compositing it produces a bowtie that also
+    blows the canvas bounds out (8574x1400 for a window that should be about
+    2500x1200), so every good frame is squashed into a sliver.
+
+    Signed area catches the reflection; an area-only test taking abs() does
+    NOT, and a mosaic built with one came out a third upside down. Convexity
+    catches the shears that survive both."""
+    x, y = corners[:, 0], corners[:, 1]
+    if not np.all(np.isfinite(corners)):
+        return False
+    signed = 0.5 * (np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+    if signed <= 0:
+        return False
+    if not (min_area <= abs(signed) / frame_area <= max_area):
+        return False
+    cross = [np.cross(corners[(i + 1) % 4] - corners[i],
+                      corners[(i + 2) % 4] - corners[(i + 1) % 4]) for i in range(4)]
+    return all(v > 0 for v in cross) or all(v < 0 for v in cross)
+
+
 def segment_canvas(frames: list, registrations: list[FrameRegistration],
                     segment_id: int = None, max_pixels: int = 12_000_000,
                     progress: bool = False):
@@ -369,11 +396,21 @@ def segment_canvas(frames: list, registrations: list[FrameRegistration],
     # paints a pixel first, and the anchor is the frame with zero warp error
     members = sorted(members, key=lambda r: not np.allclose(r.homography, np.eye(3)))
 
-    corners = []
+    kept, corners = [], []
     for reg in members:
         h, w = frames[reg.frame_idx].shape[:2]
         box = np.array([[[0.0, 0.0]], [[w, 0.0]], [[w, h]], [[0.0, h]]], dtype=np.float64)
-        corners.append(cv2.perspectiveTransform(box, reg.homography).reshape(-1, 2))
+        c = cv2.perspectiveTransform(box, reg.homography).reshape(-1, 2)
+        if not warp_is_plausible(c, float(w * h)):
+            continue
+        kept.append(reg)
+        corners.append(c)
+    if not kept:
+        return None, None
+    if len(kept) < len(members) and progress:
+        print(f"  dropped {len(members) - len(kept)} frame(s) whose warp is "
+              f"implausible (see mosaic.warp_is_plausible)")
+    members = kept
     corners = np.concatenate(corners, axis=0)
     min_xy = corners.min(axis=0)
     max_xy = corners.max(axis=0)

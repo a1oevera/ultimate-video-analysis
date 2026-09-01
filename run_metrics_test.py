@@ -101,9 +101,27 @@ regs = register_sequence(frames, mosaic_cfg)
 homography_by_idx = {r.frame_idx: r.homography for r in regs if r.ok}
 segment_of_frame = {r.frame_idx: r.segment_id for r in regs if r.ok}
 
-calib_frames = set(calib.source_frame_indices or [])
-if not calib_frames and calib.line_details:
-    calib_frames = {fi for d in calib.line_details for fi in (d["frame_indices"] or [])}
+# A calibration records RAW VIDEO FRAME NUMBERS (see run_field_lines_propose
+# _raw_frame). This run sampled its own frames at start_frame + k*step, so map
+# the calibration's raw numbers onto our positional ones. Tolerance is half a
+# sampling step: the nearest frame we actually took. Older calibrations stored
+# positional indices, which look like small numbers -- fall back to treating
+# them as positional so those still load.
+calib_raw = set(calib.source_frame_indices or [])
+if not calib_raw and calib.line_details:
+    calib_raw = {fi for d in calib.line_details for fi in (d["frame_indices"] or [])}
+calib_frames = set()
+for raw in calib_raw:
+    if raw < len(frames) and max(calib_raw) < len(frames):
+        calib_frames.add(int(raw))          # legacy: positional indices
+        continue
+    k = (raw - start_frame) / float(step)
+    if -0.5 <= k <= len(frames) - 0.5:
+        calib_frames.add(int(round(k)))
+if calib_raw and not calib_frames:
+    print(f"  NOTE: the calibration's {len(calib_raw)} source frames "
+          f"(raw {min(calib_raw)}..{max(calib_raw)}) fall outside this window "
+          f"(raw {start_frame}..{start_frame + len(frames)*step})")
 matching_segs = {segment_of_frame[fi] for fi in calib_frames if fi in segment_of_frame}
 if not matching_segs:
     sys.exit("none of the calibration's source frames registered in this window -- "
@@ -351,8 +369,22 @@ print(f"\nOn-field detections per frame -- team A: mean={np.mean(on_field_counts
 print(f"On-field detections per frame -- team B: mean={np.mean(on_field_counts['B']):.1f} "
       f"min={min(on_field_counts['B'])} max={max(on_field_counts['B'])}")
 
-# instantaneous speed samples: only consecutive SAMPLED frames, same track id
+# instantaneous speed samples: only consecutive SAMPLED frames, same track id.
+#
+# MEASURED, and the reason for the cap below: sampling the same 40s window at
+# 1/3/6 fps gave medians that barely moved (0.5-1.0 m/s) but MAXIMA that
+# exploded -- 3.9, then 13.0, then 40.4 m/s. 40 m/s is 144 km/h. Those are not
+# fast players, they are the tracker pairing two DIFFERENT people between
+# frames: the denser the sampling, the more candidates within reach and the
+# more often it mispairs. Unbounded, every one of those lands in the mean.
+#
+# The world record 100m pace is about 10.4 m/s and these are amateurs in a
+# mixed division, so anything past MAX_HUMAN_M_S is a matching failure, not a
+# measurement. Dropping them is honest; leaving them in silently inflates the
+# mean, which is exactly what made the first speed numbers untrustworthy.
+MAX_HUMAN_M_S = 11.0
 speeds_cm_s = {"A": [], "B": []}
+n_impossible = 0
 for i in range(len(per_frame_tracks) - 1):
     dt = per_frame_time[i + 1] - per_frame_time[i]
     if dt <= 0:
@@ -362,7 +394,14 @@ for i in range(len(per_frame_tracks) - 1):
         if tid in nxt:
             fx1, fy1, team1 = nxt[tid]
             dist_cm = float(np.hypot(fx1 - fx0, fy1 - fy0))
+            v_ms = dist_cm / dt / 100.0
+            if v_ms > MAX_HUMAN_M_S:
+                n_impossible += 1
+                continue
             speeds_cm_s[team0].append(dist_cm / dt)
+if n_impossible:
+    print(f"\nDropped {n_impossible} match(es) implying > {MAX_HUMAN_M_S:.0f} m/s "
+          f"-- those are mispaired tracks, not sprinting")
 
 n_matched = len(speeds_cm_s["A"]) + len(speeds_cm_s["B"])
 n_total_dets = sum(len(m) for m in per_frame_tracks)

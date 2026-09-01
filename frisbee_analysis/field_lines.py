@@ -838,9 +838,25 @@ def track_lines(frames: list, registrations: list, segment_id: int = None,
 
     clusters = _consolidate_clusters(clusters, cfg, frames[members[0].frame_idx].shape[1])
 
+    # MEASURED BUG this guard fixes: a frame whose registration fails badly
+    # throws its detections tens of thousands of pixels outside the pan. Those
+    # stray points cluster with each other (they are collinear by accident) and
+    # the result LOOKS like a line -- on torovcanyon t=1700+90s, candidate 43's
+    # four points sat at x=-46199..14461 on a 4833px canvas, 60941px apart. Drawn
+    # extended it passed straight through the real far sideline, so it was
+    # picked by eye as that line; fitting it gave a 10721px reprojection error.
+    # Such clusters also consume slots in the max_lines cap, crowding out real
+    # short lines like endzone-only paint.
+    frame_w_ref = frames[members[0].frame_idx].shape[1]
+    frame_h_ref = frames[members[0].frame_idx].shape[0]
+    reach_x, reach_y = 5.0 * frame_w_ref, 5.0 * frame_h_ref
+
     tracked = []
     for c in clusters:
         if len(c["frames"]) < min_frames:
+            continue
+        pts = np.asarray(c["points"], dtype=np.float64)
+        if (np.abs(pts[:, 0]) > reach_x).any() or (np.abs(pts[:, 1]) > reach_y).any():
             continue
         line = _fit_line_tls(c["points"])
         pts = np.asarray(c["points"], dtype=np.float64)

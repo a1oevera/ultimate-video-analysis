@@ -78,7 +78,8 @@ from frisbee_analysis import (UltimatePitchConfiguration, MosaicConfig, register
                               detect_conics, arc_fractions, split_merged_lines)
 from frisbee_analysis.watchers import (collect_static_clusters, find_rows, WatcherRow,
                                        watchers_outside_field)
-from frisbee_analysis.field_lines import (TrackedLine, ConeHint, projected_field_is_sane,
+from frisbee_analysis.field_lines import (TrackedLine, ConeHint, LineConfig,
+                                          projected_field_is_sane,
                                           playing_surface_mask)
 from frisbee_analysis.field_model import (fit_field_model, build_field_model,
                                           draw_field_model, FIELD_EDGES, EDGE_NAMES as MODEL_EDGE_NAMES)
@@ -116,6 +117,7 @@ def parse_args(argv):
     sideline_colour = None
     manual = []
     max_lines, min_frames = 12, 3
+    min_component, min_elong = None, None
     corners = {}
     drop_arcs = False
     i = 1
@@ -149,6 +151,12 @@ def parse_args(argv):
                 corners[int(v)] = (cx, cy)
                 i += 1
             continue
+        if token == "--min-component":
+            min_component = int(argv[i + 1]); i += 2
+            continue
+        if token == "--min-elongation":
+            min_elong = float(argv[i + 1]); i += 2
+            continue
         if token == "--max-lines":
             max_lines = int(argv[i + 1]); i += 2
             continue
@@ -176,11 +184,12 @@ def parse_args(argv):
             continue
         positional.append(token)
         i += 1
-    return positional, assignments, out_path, sideline_colour, manual, max_lines, min_frames, corners, drop_arcs
+    return positional, assignments, out_path, sideline_colour, manual, max_lines, min_frames, corners, drop_arcs, min_component, min_elong
 
 
 (positional, assignments, out_path, sideline_colour, manual_lines,
- max_lines, min_frames, corners, drop_arcs) = parse_args(sys.argv)
+ max_lines, min_frames, corners, drop_arcs,
+ min_component, min_elong) = parse_args(sys.argv)
 # The person knows their own field. On torovcanyon.mp4 the sidelines are the BLUE
 # lines; saying so lets ranking prefer labellings that agree, without ever putting
 # that fact into the geometry.
@@ -195,6 +204,10 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 cache_key = f"{os.path.basename(video_path)}_{start_sec:.0f}_{duration_sec:.0f}_{sample_fps:g}"
 if (max_lines, min_frames) != (12, 3):
     cache_key += f"_m{max_lines}f{min_frames}"
+if min_component is not None:
+    cache_key += f"c{min_component}"
+if min_elong is not None:
+    cache_key += f"e{min_elong:g}"
 cache_path = os.path.join(CACHE_DIR, cache_key + ".json")
 reference_path = os.path.join(CACHE_DIR, cache_key + "_ref.jpg")
 pan_path = os.path.join(CACHE_DIR, cache_key + "_pan.jpg")
@@ -244,7 +257,19 @@ def detect_and_cache():
     print("Shortening registration chains (refine_to_anchor)...")
     regs = refine_to_anchor(frames, regs, mosaic_cfg, progress=True)
     print("Detecting and tracking lines across the pan...")
-    tracked = track_lines(frames, regs, segment_id, overlay_boxes,
+    # Loosening these is how a SHORT marking gets through -- endzone-only
+    # sideline paint is small and, seen far away and near end-on, not very
+    # elongated. The defaults (40px area, elongation 5) are tuned to reject
+    # kit bags and the centre circle, and they reject short real paint too.
+    line_cfg = LineConfig()
+    if min_component is not None:
+        line_cfg.min_component_px = min_component
+    if min_elong is not None:
+        line_cfg.min_elongation = min_elong
+    if min_component is not None or min_elong is not None:
+        print(f"  line filters: min_component_px={line_cfg.min_component_px}, "
+              f"min_elongation={line_cfg.min_elongation}")
+    tracked = track_lines(frames, regs, segment_id, overlay_boxes, cfg=line_cfg,
                            min_frames=min_frames, max_lines=max_lines)
     yolo = None
     try:
@@ -563,6 +588,19 @@ if not assignments and not manual_lines and not corners:
           f"{sample_fps:g} --assign 0=3,4 ...")
     sys.exit(0)
 
+_cap_probe = cv2.VideoCapture(video_path)
+_VIDEO_FPS = _cap_probe.get(cv2.CAP_PROP_FPS) or 30.0
+_cap_probe.release()
+_STEP = max(1, int(round(_VIDEO_FPS / sample_fps)))
+_START_FRAME = int(round(start_sec * _VIDEO_FPS))
+
+
+def _raw_frame(positional):
+    """This run sampled frames at start_frame + k*step; store k as that raw
+    video frame number so other tools can line it up with their own sampling."""
+    return _START_FRAME + int(positional) * _STEP
+
+
 # ---------------------------------------------------------------- fit ------
 # Four field VERTICES given directly. This bypasses line labelling entirely:
 # the person names corners, which is what they have repeatedly turned out to
@@ -646,7 +684,15 @@ if calib is None:
         # registered in this window". Every calibration this tool produced
         # before now was unusable downstream for exactly that reason. A
         # manual (--line) line contributes no frames, hence the `or None`.
-        line_frame_indices=[list(l.frame_indices) or None for l in lines],
+        # RAW VIDEO FRAME NUMBERS, not indices into this run's sample list.
+        # MEASURED: storing positional indices tied a calibration to the exact
+        # start/duration/sample_fps it was fitted with -- run_metrics_test.py
+        # rejected it under any other sampling with "none of the calibration's
+        # source frames registered in this window". Raw frame numbers are the
+        # same quantity in every run of the same video, so a calibration fitted
+        # at 1fps can be used by a metrics run at 3fps.
+        line_frame_indices=[[_raw_frame(k) for k in l.frame_indices] or None
+                             for l in lines],
         line_field_edges=edges, cfg=cfg)
   except ValueError as exc:
     sys.exit(f"\nFIT REFUSED: {exc}")

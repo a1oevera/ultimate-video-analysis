@@ -776,3 +776,86 @@ def calibration_covers_evidence(calib: Calibration, image_points,
         if np.isfinite(fx) and np.isfinite(fy) and 0.0 <= fx <= region["usable_x_max"]:
             ok += 1
     return ok >= 0.75 * len(image_points)
+
+
+def _evidence_field_points(calib: Calibration, cfg: UltimatePitchConfiguration = None):
+    """Every field-space point this calibration was actually fitted from:
+    the explicit field_points, plus both endpoint vertices of each labelled
+    line edge. Used to decide which SIDE of the horizon the camera is on."""
+    cfg = cfg or UltimatePitchConfiguration()
+    pts = [tuple(p) for p in (calib.field_points or [])]
+    for det in (calib.line_details or []):
+        vi, vj = det["edge"]
+        pts.append(tuple(cfg.vertices[vi - 1]))
+        pts.append(tuple(cfg.vertices[vj - 1]))
+    return np.array(pts, dtype=float) if pts else np.zeros((0, 2))
+
+
+def field_visibility(calib: Calibration, fx_cm, fy_cm,
+                     cfg: UltimatePitchConfiguration = None,
+                     max_m_per_px: float = 0.5):
+    """Boolean mask over arbitrary field points: can this calibration
+    represent the ground there at all?
+
+    WHY THIS EXISTS ALONGSIDE field_validity_region. That function answers
+    with a single scalar, `usable_x_max`, and every caller reads it as
+    "usable where x <= this". That silently assumes the camera stands at the
+    x=0 end looking up-field. MEASURED (calibration_corners.json, the
+    t=1700s corner-clicked fit): that calibration is anchored on vertices
+    5-8, i.e. the FAR endzone at x=82..100m, and field_validity_region
+    reports usable_x_max=11.7m -- the opposite end from everything it can
+    see. Masking with `x <= 11.7m` paints the one strip of field that
+    calibration knows nothing about, and drops the endzone it was fitted on.
+    That is the whole reason two endzone rectifications could not be
+    combined: one of them was being masked backwards.
+
+    Two side-agnostic tests replace the scalar:
+
+      IN FRONT OF THE CAMERA -- w, the projective denominator of
+      field->pixel, is zero exactly on the horizon and flips sign across it.
+      Points whose w-sign matches the sign at the fitted evidence are on the
+      camera's side of it; the rest are the bowtie, projecting to arithmetic
+      rather than geometry. This needs no assumption about which end the
+      camera is at, because the evidence itself says which side is real.
+
+      RESOLVED FINELY ENOUGH -- near the horizon perspective compresses
+      violently, so being merely in front is not enough. Ground resolution
+      (metres of field per image pixel, from the singular values of the
+      field->pixel Jacobian) is the honest measure of that, and it is the
+      one this codebase already reasons in: field_validity_region's own
+      docstring cites "1 image pixel = 0.01-0.04 m on the ground from x=0 to
+      x=60m" as the evidence a local calibration is good. Default cutoff
+      0.5 m/px is ~15x coarser than that measured good range, so it excludes
+      only genuinely collapsed geometry, and replaces the old `safety=0.85`
+      fudge with a number that means something.
+    """
+    cfg = cfg or UltimatePitchConfiguration()
+    fx_cm = np.asarray(fx_cm, dtype=float)
+    fy_cm = np.asarray(fy_cm, dtype=float)
+    H_f2p = np.linalg.inv(np.asarray(calib.H()))
+
+    def w_of(x, y):
+        return H_f2p[2, 0] * x + H_f2p[2, 1] * y + H_f2p[2, 2]
+
+    ev = _evidence_field_points(calib, cfg)
+    if len(ev) == 0:
+        raise ValueError("calibration records no field-space evidence, so which side of "
+                         "the horizon the camera is on cannot be determined")
+    want = np.sign(np.median(w_of(ev[:, 0], ev[:, 1])))
+    w = w_of(fx_cm, fy_cm)
+    in_front = np.sign(w) == want
+
+    # ground resolution from the Jacobian, by central differences in cm
+    d = 1.0
+    def proj(x, y):
+        p = np.stack([x, y, np.ones_like(x)], axis=-1) @ H_f2p.T
+        return p[..., :2] / p[..., 2:3]
+    base = proj(fx_cm, fy_cm)
+    jx = (proj(fx_cm + d, fy_cm) - base) / d          # px per cm, along field x
+    jy = (proj(fx_cm, fy_cm + d) - base) / d          # px per cm, along field y
+    J = np.stack([jx, jy], axis=-1)                   # (..., 2 px, 2 field)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        smin = np.linalg.svd(J, compute_uv=False)[..., -1]   # px per cm, worst direction
+        m_per_px = 1.0 / (smin * 100.0)                      # cm->m
+    fine_enough = np.isfinite(m_per_px) & (m_per_px <= max_m_per_px)
+    return in_front & fine_enough

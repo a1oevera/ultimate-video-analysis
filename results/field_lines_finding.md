@@ -2002,10 +2002,42 @@ Caveat: with noiseless clicks 4 lines reproduce the held-out lines to 0.000px --
 4 lines determine H exactly. All the error above is noise amplification, so these
 numbers describe conditioning, not bias.
 
-Acted on in `run_click_corners.py`: the fit is now refused when a cross line is
-drawn within 25 deg of the sideline family (this catches all 4 of the bad t=2700
-lines and none of the good one), and refused when either sideline is missing.
-Shift-F overrides both. A broken fit (usable < 20%) saves to
+Acted on in `run_click_corners.py`: the fit is refused when either sideline is
+missing (shift-F overrides). An angle-based orientation guard was also added here
+and is RETRACTED in 3.35 below -- do not reinstate it. A broken fit (usable < 20%) saves to
 `calibration_clicked_REJECTED.json` so it cannot be picked up by mistake, and
 prints a leave-one-out table. Region past the validity limit now renders dark
 grey with a caption instead of black.
+
+## 3.35 RETRACTION: the 25-degree orientation guard was wrong
+
+3.33 concluded the bad t=2700 lines could be recognised by being drawn within
+25 deg of the sideline family. That test is invalid, and it is the same
+angle-based mistake already recorded against line grouping: image angle is not
+preserved under perspective, and near the horizon a cross-field line genuinely
+flattens toward the sideline direction.
+
+Checked against four real calibrations, sampling each line only inside its own
+validity region and comparing with that calibration's own sideline family:
+
+| calibration | sidelines | cross lines within 25 deg (i.e. wrongly refused) |
+|---|---|---|
+| t1700 (valid 100m) | 26.7 deg | near goal 12.6, far goal 9.3, far end 10.9, halfway 4.0 |
+| t3235 rowfit (44m) | 15.5 deg | near goal 6.8, near end 10.1 |
+| t3600 (37m) | 25.3 deg | near goal 19.4, near end 23.4 |
+| from_lines (89m) | 46.2 deg | none |
+
+9 of the 13 measurable valid lines would have been refused. The guard now always
+returns [] and is documented in place so it is not reintroduced.
+
+Vanishing-point concurrency was tried as a principled replacement and also fails:
+the five bad t=2700 cross lines are concurrent to 1.56 deg, which is inside
+ordinary click noise (calibration-generated lines score 0.000 deg only because
+they come from a homography by construction). There is no reliable geometric
+signature of this mistake in the clicks themselves.
+
+What does work is outcome-based and was already in place: a mislabelled set
+produces a degenerate homography, and the validity region measures it directly.
+Across every calibration in the project the separation is clean -- 27.9%, 37.4%,
+44.4%, 49.3%, 89.1%, 100% for fits believed sound, against 5.7% for the bad
+clicked one. The <20% rejection rule keeps that test and drops the heuristics.

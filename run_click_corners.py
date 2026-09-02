@@ -188,24 +188,16 @@ def conditioning_warnings(usable):
 
 
 def orientation_warnings(usable, min_sep_deg=25.0):
-    """A goal/end line traced nearly PARALLEL to the sidelines is mislabelled --
-    across the field it must run visibly across the image. Catching this at click
-    time matters: the DLT will happily satisfy contradictory labels by throwing the
-    horizon onto the field, which renders as a black rectified check with no clue
-    as to why (exactly how the t=2700 attempt failed)."""
-    along = [_seg_angle(p) for e, p in usable.items() if e in ALONG]
-    if not along:
-        return []
-    ref = float(np.mean(along))
-    bad = []
-    for e, p in sorted(usable.items()):
-        if e not in ACROSS:
-            continue
-        sep = abs(_seg_angle(p) - ref)
-        if sep < min_sep_deg:
-            bad.append(f"    {LINE_NAMES.get(e, str(e)):34s} runs {sep:.0f}d from the "
-                       f"sidelines -- it should cross them, not follow them")
-    return bad
+    """RETRACTED -- always returns []. This used to refuse a cross-field line drawn
+    within 25deg of the sideline family. That is the same angle-based reasoning that
+    fails elsewhere in this project: near the horizon a cross line genuinely flattens
+    toward the sideline direction. Measured against four real calibrations it would
+    have refused 9 of 13 valid lines -- the t=3235 near goal line sits 6.8deg from its
+    sidelines, t=1700 halfway 4.0deg. VP concurrency was tried as a replacement and
+    also fails to separate: the bad t=2700 cross lines are concurrent to 1.56deg,
+    inside click noise. Bad labelling is caught by its RESULT (a degenerate validity
+    region) in _finish, not by how the strokes look."""
+    return []
 
 
 def do_fit():
@@ -214,16 +206,6 @@ def do_fit():
         if len(usable) < 4:
             print(f"need >= 4 lines with 2+ points each, have {len(usable)}: "
                   f"{[LINE_NAMES[e].split('(')[0].strip() for e in usable]}")
-            return
-        warn = orientation_warnings(usable)
-        if warn and not state.get("force"):
-            print("\nFIT REFUSED -- these lines are labelled across the field but drawn "
-                  "along it:")
-            for w in warn:
-                print(w)
-            print("\n  In this canvas the field runs left-right: sidelines look roughly")
-            print("  HORIZONTAL, and end/goal/halfway must run steeply DOWN the image.")
-            print("  Re-click them (c clears), or press F (shift-f) to fit anyway.")
             return
         cond = conditioning_warnings(usable)
         if cond and not state.get("force"):
@@ -289,7 +271,7 @@ def preview_calib():
         return preview["calib"]
     preview["key"] = key
     preview["calib"] = preview["vr"] = None
-    if len(usable) < 4 or orientation_warnings(usable) or conditioning_warnings(usable):
+    if len(usable) < 4 or conditioning_warnings(usable):
         return None
     edges = sorted(usable)
     pts = [[(x - offx, y - offy) for x, y in usable[e]] for e in edges]

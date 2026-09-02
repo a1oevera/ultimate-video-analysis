@@ -1893,3 +1893,57 @@ then showed the SAME lines scoring 0-8% in their own window -- including the
 goal line, a confirmed bright marking with 102 detected points on it. The
 metric was broken; the conclusion is withdrawn. Always run the instrument on a
 case whose answer is known before believing it on one that is not.
+
+---
+
+## Result 3.32: the far sideline was fitted onto a row of standing people
+
+**The person:** *"i think that youre detecting people in a stack as a sideline
+and basing the far sideline before those players instead of behind"* -- and
+when I got the direction backwards, *"no the field is too small actually"*.
+
+**MEASURED.** In the t=3235 frame YOLO finds 51 people; the densest collinear
+row is **33 of them spanning 1686px**. Under the calibration in use their FEET
+read field **y = 33.4m**. People standing out of play are OUTSIDE the field, so
+they must read y > 37. Reading 33.4 means the field was drawn about **3.6m
+(10%) too narrow**, with the far sideline short of the row rather than past it.
+
+The error also GREW across the frame -- the fitted sideline and the row of feet
+cross over at x~400, and by x=1789 the sideline sits 28px nearer the camera
+than the people. So the line was at the wrong ANGLE, not merely offset.
+Unsurprising: it came from a 2-point transferred line, the weakest constraint
+in that fit, contributing zero degrees of freedom of its own.
+
+**Fix.** Refit with the far sideline constrained to the 33-person row, keeping
+the 136-point goal line and 35-point end line. The row then reads y=38.6m --
+1.6m outside the sideline, a plausible standoff for watchers -- and validity
+improves from 40.1m to 44.4m. Confirmed by eye: *"the sideline looks good"*.
+
+Speeds rise 5-25%, the right order for a 10% width correction that affects
+only the cross-field component (3fps: team A mean 1.19 -> 1.26 m/s, median
+0.79 -> 1.02).
+
+**Why the detector keeps doing this.** A dense row of standing people is long,
+straight and high-contrast against turf, so it beats the true sideline on
+length, persistence and support -- and the true one is thin and often painted
+only in the endzone. `watchers.py` already encoded that a row INDICATES a
+sideline. What was missing is that they stand OUTSIDE it, so the line belongs
+at or beyond their feet, never short of them.
+
+**Two process failures worth recording, both mine.**
+
+The person reported this same defect at t=3600 much earlier (*"the right
+sideline is too far out ... behind the line of players"*). I took their
+corrected line there and never checked whether the same error had propagated
+into the other calibration. It had, and everything built on it -- the
+whole-video overlay, the coverage plan, the speed metrics -- inherited a 10%
+cross-field bias.
+
+And when they first raised it here I reasoned from "the row is inside the
+field, so the sideline is too far out" and reported the correction backwards.
+The measurement was right; the inference from it was not. They corrected it in
+four words.
+
+**Still open:** speed sample counts DROPPED (n=72 -> 38 at 1fps) although the
+valid region grew. A wider field should admit more detections, not fewer. Not
+traced.

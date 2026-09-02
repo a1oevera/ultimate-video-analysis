@@ -1961,3 +1961,51 @@ defect. Not a bug: a direct consequence of the correction.
 Re-running the whole-video overlay on the corrected calibration: still 80/93
 frames, but median edges per frame rises 3 -> 4, and the blue near sideline now
 appears in frame where it previously fell outside the validity region.
+
+## 3.33 The clicked t=2700 calibration was broken, and why
+
+The rectified check rendered black because the fit put the horizon on the field:
+`usable_x_max` = 5.7m of 100m. Cause, from the saved `line_details`: four of the
+five cross-field lines were traced as near-HORIZONTAL strokes in a pan canvas
+where the field runs left-right, so end/goal lines must run steeply down the
+image. Only halfway (82 deg) was drawn correctly.
+
+| line | drawn at | should be |
+|---|---|---|
+| near end | 4.4 deg | across |
+| near goal | 10.3 deg | across |
+| far goal | 8.7 deg | across |
+| far end | 5.9 deg | across |
+
+Leave-one-out confirms the labels are mutually contradictory rather than merely
+noisy: dropping the far sideline moves usable 5.7% -> 64%, dropping the near
+sideline -> 55.9%, but both leave a >2500px or NaN worst-case error.
+
+Root cause is upstream: the t=2700 canvas is 58% painted and its right-hand 40%
+(the far end of the field) only ~37%, so the lines had to be guessed.
+
+## 3.34 Both sidelines dominate calibration conditioning
+
+Synthetic test on `calibration_t1700` (the only calibration with all 7 lines
+inside its validity region), 2px Gaussian click noise, 3 points per line, all 30
+four-line subsets, scored by predicting the 3 lines NOT clicked:
+
+- all 10 subsets containing BOTH sidelines: median 7.1 - 47.1px
+- all 20 subsets containing ONE sideline: median 284 - 1769px
+
+The separation is complete -- no one-sideline subset beat any both-sideline
+subset. Scaling the number of lines (2px noise, worst case over random subsets):
+4 lines median 304-1312px, 5 lines 59-105px, 6 lines 21-34px, 7 lines 8.7-14.3px.
+Extra points per line help far less than extra lines.
+
+Caveat: with noiseless clicks 4 lines reproduce the held-out lines to 0.000px --
+4 lines determine H exactly. All the error above is noise amplification, so these
+numbers describe conditioning, not bias.
+
+Acted on in `run_click_corners.py`: the fit is now refused when a cross line is
+drawn within 25 deg of the sideline family (this catches all 4 of the bad t=2700
+lines and none of the good one), and refused when either sideline is missing.
+Shift-F overrides both. A broken fit (usable < 20%) saves to
+`calibration_clicked_REJECTED.json` so it cannot be picked up by mistake, and
+prints a leave-one-out table. Region past the validity limit now renders dark
+grey with a caption instead of black.

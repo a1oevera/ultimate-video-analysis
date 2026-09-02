@@ -1944,6 +1944,20 @@ field, so the sideline is too far out" and reported the correction backwards.
 The measurement was right; the inference from it was not. They corrected it in
 four words.
 
-**Still open:** speed sample counts DROPPED (n=72 -> 38 at 1fps) although the
-valid region grew. A wider field should admit more detections, not fewer. Not
-traced.
+**The sample-count drop, traced and explained.** Speed samples fell (n=72 -> 38
+at 1fps) and total on-field detections with them (377 -> 248), which looked
+backwards for a "wider" field. Two measurements settle it:
+
+  - the NEAR sideline did not move: blue paint from t=3600 lands at y=-0.02m
+    under both the old and new calibration
+  - the FAR sideline moved TOWARD the camera, down onto the players' feet
+
+So the field's footprint in the IMAGE shrank, even though the field is now
+correctly placed -- fewer detections fall inside it. Meanwhile far fewer are
+thrown away past the horizon (342 -> 134) because validity improved from
+40.1m to 44.4m. Both effects are real and point opposite ways; neither is a
+defect. Not a bug: a direct consequence of the correction.
+
+Re-running the whole-video overlay on the corrected calibration: still 80/93
+frames, but median edges per frame rises 3 -> 4, and the blue near sideline now
+appears in frame where it previously fell outside the validity region.

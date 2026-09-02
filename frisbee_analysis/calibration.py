@@ -791,9 +791,44 @@ def _evidence_field_points(calib: Calibration, cfg: UltimatePitchConfiguration =
     return np.array(pts, dtype=float) if pts else np.zeros((0, 2))
 
 
+def _refit_perturbed(calib: Calibration, sigma_px: float, n_trials: int,
+                     cfg: UltimatePitchConfiguration, seed: int = 0):
+    """Re-fit this calibration `n_trials` times from its OWN recorded
+    evidence, jittered by `sigma_px` of click noise each time. Returns the
+    list of field->pixel homographies. Empty if the evidence cannot be
+    re-fitted (nothing recorded, or the jittered fit is degenerate)."""
+    import cv2
+    rng = np.random.default_rng(seed)
+    out = []
+    if calib.line_details:
+        pts = [np.array(d["points"], float) for d in calib.line_details]
+        edges = [tuple(d["edge"]) for d in calib.line_details]
+        for _ in range(n_trials):
+            jittered = [p + rng.normal(0, sigma_px, p.shape) for p in pts]
+            try:
+                c2 = fit_calibration_with_lines([], [], "sensitivity",
+                                                [p.tolist() for p in jittered], edges, cfg)
+                out.append(np.linalg.inv(np.asarray(c2.H())))
+            except Exception:
+                continue
+    elif calib.image_points and calib.field_points:
+        src = np.array(calib.image_points, np.float32)
+        dst = np.array(calib.field_points, np.float32)
+        if len(src) >= 4:
+            for _ in range(n_trials):
+                j = src + rng.normal(0, sigma_px, src.shape).astype(np.float32)
+                Hp2f, _ = cv2.findHomography(j, dst, 0)
+                if Hp2f is not None:
+                    out.append(np.linalg.inv(Hp2f))
+    return out
+
+
 def field_visibility(calib: Calibration, fx_cm, fy_cm,
                      cfg: UltimatePitchConfiguration = None,
-                     max_m_per_px: float = 0.5):
+                     max_m_per_px: float = 0.5,
+                     click_sigma_px: float = 2.0,
+                     max_displacement_px: float = 20.0,
+                     n_trials: int = 32):
     """Boolean mask over arbitrary field points: can this calibration
     represent the ground there at all?
 
@@ -858,4 +893,38 @@ def field_visibility(calib: Calibration, fx_cm, fy_cm,
         smin = np.linalg.svd(J, compute_uv=False)[..., -1]   # px per cm, worst direction
         m_per_px = 1.0 / (smin * 100.0)                      # cm->m
     fine_enough = np.isfinite(m_per_px) & (m_per_px <= max_m_per_px)
-    return in_front & fine_enough
+
+    # STABLE UNDER THE CLICK ERROR IT WAS FITTED FROM. Being in front of the
+    # camera and finely resolved is still not enough, and this test exists
+    # because the first two let a fit over-claim badly. MEASURED
+    # (calibration_corners.json, four corners clicked inside one 18m endzone
+    # of a 100m field): in front + resolved says it can represent x=0..85m.
+    # Re-fitting it 300 times from its own corners jittered by 2px -- less
+    # than the error of eyeballing an unpainted corner -- moves the projected
+    # point 7px at x=0, 18px at x=25m, 123px at x=50m, and 19000px by the
+    # horizon crossing at x=70m. The geometry is real only where it is stable
+    # against the clicks that produced it, which for that fit is x <= 25m,
+    # not 85m. A calibration fitted from evidence spanning a short baseline
+    # cannot say anything about ground far from it, and nothing in the
+    # homography itself reveals that -- an exactly-determined 4-point fit
+    # reproduces its own points perfectly however bad they were, so its
+    # reprojection error is identically zero and reports nothing.
+    #
+    # Re-fitting from the recorded evidence is the direct way to ask. If a
+    # calibration recorded no re-fittable evidence the test is skipped rather
+    # than guessed at, and visibility falls back to the two geometric tests.
+    stable = np.ones(np.shape(fx_cm), bool)
+    if n_trials > 0 and click_sigma_px > 0:
+        variants = _refit_perturbed(calib, click_sigma_px, n_trials, cfg)
+        if len(variants) >= 8:
+            acc = np.zeros(np.shape(fx_cm), np.float64)
+            ones = np.ones_like(fx_cm, dtype=float)
+            for Hv in variants:
+                pv = np.stack([fx_cm, fy_cm, ones], axis=-1) @ Hv.T
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    pv = pv[..., :2] / pv[..., 2:3]
+                acc += np.linalg.norm(pv - base, axis=-1)
+            median_shift = acc / len(variants)
+            stable = np.isfinite(median_shift) & (median_shift <= max_displacement_px)
+
+    return in_front & fine_enough & stable

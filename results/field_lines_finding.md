@@ -2128,3 +2128,45 @@ zero offset.
 
 The predicted touchlines therefore remain UNVALIDATED. The soccer-pitch pose
 above rests only on features inside the 44m validity region.
+
+## 3.38 Fitting from soccer geometry: works, but one frame does not determine the plane
+
+`run_soccer_fit.py` fits an image->field homography by optimising 8 DOF so the
+centre-circle paint maps to radius 9.15m and the halfway line maps to x=0.
+
+Two things had to be right:
+
+- **Circle pixels must be filtered to the ellipse.** Taking every paint pixel in a
+  box around the circle left 53% contamination (player kit, turf seam lines) and
+  the optimiser settled at 57cm circle rms on a badly wrong plane. Iterating
+  `fitEllipse` and keeping pixels within 6px drops that to 3.8-7.4cm.
+- **Conditioning was NOT the problem.** Normalising pixel coordinates and switching
+  to trf/x_scale='jac' reproduced the bad fit to three decimals; the contamination
+  was the whole story.
+
+**The blocking result:** circle + halfway is 7 constraints (conic 5, line 2) for 8
+DOF, so it does not determine the plane. A long marking above the circle supplies
+an 8th via its direction, and the two variants reach the SAME circle residual
+while disagreeing badly about the plane:
+
+| constraints | circle rms | that marking lands at |
+|---|---|---|
+| circle + halfway | 3.8 cm | 21.12 m from centre |
+| + its direction | 7.4 cm | 12.33 m from centre |
+
+With the direction constraint the answer is stable (bootstrap sd 0.02m; perturbing
+the perspective term enough to double the circle residual moves it only
+11.94..12.54m) -- but stability is not correctness, and the two constraint sets
+differ by 9m.
+
+That marking is also **not the far touchline**: a touchline sits 32-37.5m from the
+pitch centre, and no rescaling reconciles 12.3m (it would need a 25m centre
+circle). It runs parallel to the pitch length 12.3m off centre -- most likely one
+of the dashed multi-sport markings; its straightness residual (24.9cm) is worse
+than the halfway line's (12cm), consistent with a dashed line.
+
+Conclusion: soccer-based fitting is sound in method but needs a landmark with
+known geometry away from the centre -- a touchline, penalty box or goal line. The
+centre circle alone fixes scale locally and leaves the far field free. This is
+precisely why the published pipelines (PnLCalib, nbjw_calib) regress many pitch
+keypoints rather than fitting a circle.

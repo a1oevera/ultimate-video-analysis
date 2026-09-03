@@ -2041,3 +2041,43 @@ produces a degenerate homography, and the validity region measures it directly.
 Across every calibration in the project the separation is clean -- 27.9%, 37.4%,
 44.4%, 49.3%, 89.1%, 100% for fits believed sound, against 5.7% for the bad
 clicked one. The <20% rejection rule keeps that test and drops the heuristics.
+
+## 3.36 First independently verified calibration (t=3235)
+
+The ultimate field is coned; the soccer pitch beneath it is painted, and its
+centre circle is 9.15m radius under the Laws of the Game for every pitch size.
+Those pixels are never used to fit an ultimate-field calibration, so measuring
+them through one is genuine verification rather than a circular test.
+
+Method (`run_circle_check.py`): threshold white paint on grass, map image->field
+with H, RANSAC a circle in FIELD coordinates -- where a correct homography leaves
+the circle circular and the straight lines straight, so the two separate.
+
+`calibration_t3235_rowfit`, anchor frame t=3235s:
+
+- radius **9.09 m vs regulation 9.15 m (-0.6%, 6 cm)**, 2290 inlier px
+- circle-fit residual RMS 7.6 cm
+- radius by 30-degree sector: 9.04, 9.16, 9.04, 9.08, 9.17, 9.02 m -- spread 1.6%
+- fitted centre (47.1, 17.2) m, against an ultimate-field centre of (50.0, 18.5),
+  consistent with the ultimate field being laid out on the soccer pitch
+- inliers visually confirmed to trace the painted arc
+
+This is the first independent metric verification in the project.
+
+### Two traps, both hit
+
+`cv2.fitEllipse` and an algebraic conic fit BOTH reported axis ratio ~1.18 on
+these points, which reads as an 18% distorted plane. Both are wrong: the visible
+paint covers only the left half of the circle, and on a half arc an ellipse fit
+is unconstrained. Per-sector radius is the honest shape test -- it varies 1.6%
+where a 1.18 ellipse would vary 18%. Residual does NOT discriminate: simulation
+shows a true 1.18 ellipse over this arc leaves 6.9 cm circle residual against the
+7.6 cm observed.
+
+The test could not be applied to `calibration_t1700` or `calibration_t3600`. Runs
+there returned 25.45m and 8.34m "circles" with excellent sector spreads (0.4%,
+1.1%) and plausible footprints, and were on inspection a few specks near the
+halfway line and a row of orange cones. No automatic check separated these from
+the real detection -- footprint, sector spread, residual and radius band all
+passed. The inlier overlay is therefore written every run and must be inspected
+before the radius is quoted. t=1700 and t=3600 remain UNVERIFIED, not disproven.

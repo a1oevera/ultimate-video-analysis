@@ -2248,3 +2248,36 @@ Finding the turf edge took four attempts; the three failures are recorded in
 in the sky, since trees are green; largest-green-component-touching-the-bottom
 bridges turf to trees under closing and claims 89% of the frame; per-column walks
 in either direction stop at painted lines, players and shadows).
+
+## 3.41 The verified calibration passes the ground check; PnLCalib is the outlier
+
+Applying 3.40's test to `calibration_t3235_rowfit` on its anchor frame.
+
+The automated row profile put the surface band at rows 404-436 and flagged the
+soccer 34m touchline (rows 348-377) and the ultimate near end (370-400) as above
+the surface. **Visual inspection overrules that**: in this frame the turf clearly
+reaches row ~345 before meeting the hedge, and all three projected lines land on
+grass -- the soccer touchline along the top edge of the turf, the ultimate far
+sideline on the standing row the user confirmed, the near end line on grass.
+
+The row profile fails here because a dense row of standing people, two goals and
+the hedge sit exactly at the boundary and depress turf coverage across rows
+345-405. So `surface_band` is only trustworthy where the boundary is clear; where
+people crowd it, it reads 40-60 rows low. Use it to rank candidates, confirm by
+eye -- the same rule that has applied to every check in this project.
+
+Scale of the two cases, which is what separates them:
+
+| case | projected line | surface starts | margin |
+|---|---|---|---|
+| PnLCalib t=1700 | far touchline rows 236-320 | ~390 | 70-150px above, in the trees |
+| t=3235 rowfit | soccer touchline rows 348-377 | ~345 | on the turf edge |
+
+So the far-field failure is PnLCalib's, not a property shared by every homography
+here, and the lens-distortion hypothesis is no longer needed to explain the
+t=3235 calibration. `calibration_t3235_rowfit` now passes both a local metric
+check (3.36, circle radius 9.09m) and a far-field check, and remains the anchor.
+
+3.39's 19.17m vs 19.8m agreement stays UNCONFIRMED but for a narrower reason: one
+side of it (PnLCalib) is demonstrably wrong in the far field, so the agreement is
+more likely coincidence than mutual verification.

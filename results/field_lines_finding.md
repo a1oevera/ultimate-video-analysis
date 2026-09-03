@@ -2281,3 +2281,47 @@ check (3.36, circle radius 9.09m) and a far-field check, and remains the anchor.
 3.39's 19.17m vs 19.8m agreement stays UNCONFIRMED but for a narrower reason: one
 side of it (PnLCalib) is demonstrably wrong in the far field, so the agreement is
 more likely coincidence than mutual verification.
+
+## 3.42 Why the end line and touchline are right and the far sideline is not
+
+User, reading the ground-check overlay: the touchline and end line are correct,
+everything else is not. The constraint inventory of `calibration_t3235_rowfit`
+explains this exactly.
+
+| fitted line | points | direction it constrains |
+|---|---|---|
+| near goal | 136 | along-field |
+| near end | 35 | along-field |
+| far sideline | 33 | across-field |
+| near sideline | **2** | across-field |
+
+The along-field constraints are strong (136 and 35 points), which is why the near
+END line projects correctly.
+
+The across-field constraints are both unusable:
+
+- the near sideline is a 2-point transferred line. Two points define a line
+  exactly, so it contributes no redundancy and cannot correct anything.
+- the far sideline's 33 points are the standing row's feet (3.32). Mapped through
+  the calibration they span ultimate y = **29.70 to 47.91 m**, median 45.28 -- an
+  18m spread for something being treated as a straight line, with 8 of 17 sampled
+  points reading INSIDE the 37m field, which is impossible for spectators.
+
+So the ultimate field's placement ACROSS the pitch rests on one phantom
+constraint and one 18m-wide smear. That is the whole of the far sideline's
+support, and it is why it lands wrong.
+
+The soccer touchline projects correctly because it does not come from those
+constraints at all: it derives from the soccer pose (3.37), which was built from
+the centre circle and halfway line -- both independent of the ultimate sidelines.
+
+**Status correction.** 3.36 and 3.41 stand as far as they go: the calibration is
+locally metric (circle radius 9.09m) and its lines land on turf. Neither test
+constrains the ultimate field's across-pitch offset, and 3.42 shows that offset is
+unsupported. `calibration_t3235_rowfit` should be described as a verified SOCCER
+plane carrying an unverified ultimate-field placement, not as a verified ultimate
+calibration.
+
+Next: stop fitting the ultimate sidelines from cones and people. Place the
+ultimate field inside the soccer frame instead, where the geometry is reliable,
+using a trustworthy observation of where one ultimate sideline actually is.

@@ -2081,3 +2081,50 @@ halfway line and a row of orange cones. No automatic check separated these from
 the real detection -- footprint, sector spread, residual and radius band all
 passed. The inlier overlay is therefore written every run and must be inspected
 before the radius is quoted. t=1700 and t=3600 remain UNVERIFIED, not disproven.
+
+## 3.37 Soccer geometry measured through the verified calibration
+
+Using `calibration_t3235_rowfit` (verified in 3.36), all white paint in the anchor
+frame was mapped to field coordinates and straight lines extracted by RANSAC,
+scoring each by continuity (fraction of 1m bins along it that contain points)
+rather than by raw min-max extent, which stray inliers inflate.
+
+The strongest through-centre line: 2470 px, direction 87.6 deg, and it passes
+**0.21 m from the fitted centre-circle centre**. The soccer halfway line is a
+diameter of the centre circle, so this is a real corroboration of the
+calibration: the circle centre and the halfway line are independent image
+features, and nothing in the fit (ultimate sidelines, near goal, near end) forced
+them to be collinear.
+
+Derived soccer-pitch pose, in ultimate-field coordinates:
+
+- centre (47.1, 17.2) m, against an ultimate-field centre of (50.0, 18.5)
+- width 66.8 m (regulation 64-75, commonly 68) -- approximate: the halfway line
+  had only 30% bin coverage, so treat this as +/- a metre, not surveyed
+- long axis rotated -2.4 deg from the ultimate long axis
+
+So the two fields are close to co-aligned. This is the transform needed to use
+soccer landmarks as constraints for an ultimate-field calibration.
+
+### The paint-hit metric is broken -- do not use it (second occurrence)
+
+The predicted soccer touchlines (never used in any fit) were scored by the
+fraction of sampled points landing within 6px of paint: 58%. The control kills
+it. Sliding the SAME line sideways:
+
+| offset | -8m | -4m | -2m | 0 | +2m | +4m | +8m |
+|---|---|---|---|---|---|---|---|
+| on paint | 42% | 40% | 55% | 58% | 70% | 87% | 94% |
+
+The score rises monotonically the further the line is displaced outward, because
+outward is toward the horizon, where white clutter (the standing row of people,
+fencing, tents) saturates the mask. There is no peak at the correct position, so
+the metric carries no localisation information near the horizon.
+
+This is the same metric withdrawn earlier in this project for the same reason. It
+has now failed twice. Any future "fraction of predicted line landing on paint"
+claim must be accompanied by this offset sweep, and is void without a peak at
+zero offset.
+
+The predicted touchlines therefore remain UNVALIDATED. The soccer-pitch pose
+above rests only on features inside the 44m validity region.

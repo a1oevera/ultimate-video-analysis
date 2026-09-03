@@ -2212,3 +2212,39 @@ ultimate far sideline (the one the standing row stands behind).
 Caveat: that marking's straightness through PnLCalib is 255cm rms, so its pixel
 set is contaminated by the standing row; 19.17m carries real uncertainty. The
 agreement is corroborating, not surveyed.
+
+## 3.40 A ground line must land on turf -- PnLCalib fails this in the far field
+
+Observation from the user, checking the PnLCalib overlay: the far sideline looks
+like it is in the sky. It is.
+
+Measuring the turf coverage of each image row at t=1700 (green AND smooth; low
+local texture separates turf from foliage) gives a clean step -- rows 400+ are
+53-98% turf, rows above ~360 are 0-35% (track, benches, trees). Against that:
+
+| PnLCalib ground line | image rows | on the playing surface? |
+|---|---|---|
+| centre (0m) | 505-614 | yes |
+| circle far edge (9.2m) | 400-500 | just barely |
+| the tested marking (19m) | 319-411 | mostly above it |
+| **far touchline (34m)** | **236-320** | **no -- in the trees** |
+
+**This is the check the circle test cannot do.** The centre circle spans 9.15m
+around the pitch centre, so its radius certifies the plane LOCALLY. PnLCalib
+scored 9.111m (-4cm, 5.0cm rms) at t=1700 and is still projecting the touchline
+into the foliage. Local metric accuracy does not imply far-field accuracy, and
+every verification in 3.36-3.39 was local.
+
+**This weakens 3.39's "mutual verification".** That result had PnLCalib measuring
+a marking at 19.17m and the verified t=3235 calibration predicting the ultimate
+far sideline at 19.8m, agreeing to 0.6m. But PnLCalib compresses depth -- it puts
+34m at row 280 while the turf does not even start until ~380 -- so if that marking
+is really the soccer far touchline at 34m, then 19.17m is an underestimate and the
+agreement is two methods sharing a bias, not confirming each other. Treat 3.39's
+agreement as unconfirmed.
+
+Finding the turf edge took four attempts; the three failures are recorded in
+`run_ground_check.py` so they are not repeated (green hue alone puts the surface
+in the sky, since trees are green; largest-green-component-touching-the-bottom
+bridges turf to trees under closing and claims 89% of the frame; per-column walks
+in either direction stop at painted lines, players and shadows).

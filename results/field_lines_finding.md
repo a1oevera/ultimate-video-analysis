@@ -2170,3 +2170,45 @@ known geometry away from the centre -- a touchline, penalty box or goal line. Th
 centre circle alone fixes scale locally and leaves the far field free. This is
 precisely why the published pipelines (PnLCalib, nbjw_calib) regress many pitch
 keypoints rather than fitting a circle.
+
+## 3.39 PnLCalib: verified on wide views, fails on tight ones
+
+Installed `third_party/PnLCalib` (gitignored; clone + weight URLs are in
+`.gitignore`). `run_pnlcalib.py` runs it and returns an image->field homography in
+pitch-centred metres, taking columns 0,1,3 of the 3x4 projection.
+
+**Extraction trap:** rebuilding the rotation from pan/tilt/roll via
+`pan_tilt_roll_to_orientation` gives a different orientation from the solver's own
+`rotation_matrix`, and put the pitch centre 2342m away. `inference.py` reads
+`rotation_matrix`; so must we.
+
+Scored the same independent way as everything else -- measure the PAINTED centre
+circle through the calibration. The network regresses keypoints and never sees
+that constraint, so this is a real check:
+
+| frame | view | radius (truth 9.15m) | rms | circle centre (pitch centre 0,0) |
+|---|---|---|---|---|
+| t=1700 | wide, full circle | **9.111 m** (-4cm) | 5.0 cm | (-0.08, +0.06) m |
+| t=3235 | tight, partial | 11.238 m (+209cm) | 46.4 cm | (+2.55, +1.12) m |
+
+So PnLCalib is excellent on wide views and wrong on tight partial ones, matching
+the overlays exactly (at t=3235 its halfway line sits ~150px off the paint). Its
+operating envelope must be checked per frame, not assumed.
+
+### Mutual verification, and a correction to 3.38
+
+3.38 measured a long marking above the circle at 12.33m from the pitch centre and
+called that well-determined (bootstrap sd 0.02m). PnLCalib puts the same line at
+**19.17 m**. The two disagree by 7m, which confirms 3.38's own caveat: that fit
+was one constraint short and its stability was not correctness. Prefer 19.17.
+
+19.17m also identifies the line. From the verified `calibration_t3235_rowfit`, the
+soccer centre sits at ultimate coordinates (47.1, 17.2), so the ultimate field's
+FAR SIDELINE at y=37 lies 19.8m from the soccer centre. PnLCalib, on a different
+frame by a completely different method, measures that marking at 19.17m -- a 0.6m
+agreement between two independent calibrations, and it identifies the line as the
+ultimate far sideline (the one the standing row stands behind).
+
+Caveat: that marking's straightness through PnLCalib is 255cm rms, so its pixel
+set is contaminated by the standing row; 19.17m carries real uncertainty. The
+agreement is corroborating, not surveyed.

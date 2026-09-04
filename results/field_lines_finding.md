@@ -2325,3 +2325,49 @@ calibration.
 Next: stop fitting the ultimate sidelines from cones and people. Place the
 ultimate field inside the soccer frame instead, where the geometry is reliable,
 using a trustworthy observation of where one ultimate sideline actually is.
+
+## 3.43 The blue NEAR sideline is painted and detectable -- and never coincides with PnLCalib
+
+Correction to labelling used earlier in this file: the FAR sideline is marked with
+blue CONES; the NEAR sideline is a painted BLUE LINE. Several earlier notes have
+these the wrong way round.
+
+That matters because a painted line is densely detectable by colour, which is
+exactly the across-field constraint 3.42 found missing. Detector: blue hue
+95-130, saturation >80, restricted to pixels near turf (green AND low texture),
+then the largest elongated component.
+
+19 of 54 frames sampled across the video carry a line-like blue segment. Quality
+where it appears is excellent:
+
+| t | pixels | image span | elongation | straightness |
+|---|---|---|---|---|
+| 4200s | 3040 | 464 px | 49 | **2.5 px** |
+| 2900s | 2332 | 341 px | 41 | 2.3 px |
+| 600s | 2744 | 297 px | 26 | 3.1 px |
+| 4700s | 1656 | 210 px | 20 | 2.8 px |
+
+Straightness of 2-3px over hundreds of pixels is a far stronger constraint than
+either of 3.42's across-field inputs (a 2-point phantom and an 18m-wide smear of
+people). Every detection runs off the bottom edge of the frame, so only a
+fragment of the sideline near the camera is ever visible.
+
+**Two blocking structural facts:**
+
+1. **Blue line and PnLCalib never co-occur.** Of 10 frames tested, none had both:
+   where the blue line is visible (600, 800, 1400, 3600, 4000, 4200, 4400, 5200)
+   PnLCalib returned nothing, and where PnLCalib worked (400, 5000) no blue line
+   was found. The line is visible when the camera is tight on the near side,
+   which is exactly when too little of the soccer pitch is in frame for the
+   keypoint model. So the soccer plane cannot be carried to the blue line through
+   PnLCalib in a single frame.
+
+2. **The anchor window cannot be repaired in place.** In t=3235-3300 the blue line
+   appears in only 1 of 14 sampled frames (t=3240), as a 99x65px corner fragment;
+   registered into the anchor frame (SIFT, 653/838 inliers) it lands at
+   x=-178..-61, off the frame entirely. So `calibration_t3235_rowfit`'s 2-point
+   near sideline cannot be replaced with blue-line evidence from its own window.
+
+Consequence: fixing the across-field geometry means building a NEW calibration in
+a window where the blue line is long -- t=4200 is the best (3040px, span 464px,
+straightness 2.5px) -- not repairing the existing anchor.

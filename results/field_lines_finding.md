@@ -2371,3 +2371,51 @@ fragment of the sideline near the camera is ever visible.
 Consequence: fixing the across-field geometry means building a NEW calibration in
 a window where the blue line is long -- t=4200 is the best (3040px, span 464px,
 straightness 2.5px) -- not repairing the existing anchor.
+
+## 3.44 t=4200 fit attempt: correct formulation, features too dirty
+
+User identified the t=4200 candidates: #1 is the soccer centre circle, #3 and #4
+sit on the goal line, #0 is the blue painted near sideline.
+
+**The constraint count works out.** In ultimate coordinates, near sideline (y=0)
+gives 2, goal line (x=Xg) gives 2, and the centre circle with known 9.15m radius
+but unknown centre gives 5-2=3, totalling 7 for 8 DOF -- one short, the same
+shortfall as 3.38. It closes by fixing the soccer centre's ALONG-field position
+at x=47.13m, which comes from the anchor's well-constrained direction (136+35
+points), and solving for its ACROSS-field position, which is the value 3.42 showed
+is unsupported. That makes it exactly determined and turns the across-field offset
+into an output that tests the anchor's suspect 17.21m.
+
+**The features are not clean enough.** Results:
+
+| goal line assumed | sideline \|y\| | goal \|dx\| | circle rms | recovered offset |
+|---|---|---|---|---|
+| x=18m | 5.7 cm | 46.9 cm | 29.3 cm | +30.63 m |
+| x=82m | 3.9 cm | 63.8 cm | 41.5 cm | +32.07 m |
+
+Circle rms of 29-42cm against the 3.8-7.4cm that clean fits reach (3.38, 3.36)
+means this is not trustworthy, and the two goal-line hypotheses are too close in
+quality to tell which endzone is in view. The recovered offset (~31m vs the
+anchor's 17.21m) is a large disagreement but the fit is too poor to call it a
+correction.
+
+**Why the features are dirty:**
+
+- The goal-line region holds three fragments. One runs at -64 deg, 75 deg off the
+  other two -- not part of the line, and including it initially drove circle rms
+  to 68cm and the offset to +5.50m. Filtering by angle removed it.
+- The two real fragments still differ by 6.83 deg in direction, and one's centroid
+  sits 29.5px off the other's line. Combined they fit a line at 8.5px rms, far too
+  loose for thin paint. Growing the line by absorbing nearby white pixels made it
+  worse (a 2058px blob over 412px of span, 13.1px rms).
+- The arc is roughly 90 degrees, and 3.36 established that partial arcs admit
+  badly wrong conic fits.
+
+Hough merging was also tried and failed: at a loose tolerance it fused unrelated
+segments into 1900px lines running through the sky (the bug was comparing
+unsigned offsets); with signed offsets and a tight tolerance no line over 200px
+survives at all, confirming the fragments are genuinely not collinear.
+
+Conclusion: the formulation is right and the window is wrong. What this needs is
+either a frame where the goal line is cleanly visible over a long span, or hand
+clicking along the goal line and sideline, where a human beats this detector.

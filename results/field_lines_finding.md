@@ -2419,3 +2419,44 @@ survives at all, confirming the fragments are genuinely not collinear.
 Conclusion: the formulation is right and the window is wrong. What this needs is
 either a frame where the goal line is cleanly visible over a long span, or hand
 clicking along the goal line and sideline, where a human beats this detector.
+
+## 3.45 t=4200 with clean features: the across-field offset is unidentifiable
+
+User corrected 3.44: the goal line is candidate **#3 only**, not #3 and #4. That
+explains the 6.83 deg discrepancy between them -- they are different lines.
+
+With #3 alone, trimmed to inliers, the features are clean:
+
+- goal line: 405px, span 176px, straightness **1.50px**
+- blue near sideline: 2151px, straightness **1.60px**
+- centre-circle arc: ~90 deg
+
+Residuals improve a lot, and the goal line is identified as x=18m (the near
+endzone) because x=82 fits far worse:
+
+| goal line assumed | sideline \|y\| | goal \|dx\| | circle rms |
+|---|---|---|---|
+| **x=18 m** | 2.19 cm | 18.99 cm | **9.75 cm** |
+| x=82 m | 2.59 cm | 53.89 cm | 28.48 cm |
+
+**But the recovered across-field offset is worthless.** Bootstrapping the same
+pixels: mean +17.47m, **sd 14.97m**, range -8.54 to +29.10m. A single fit returned
++28.85m, which looked like an 11.6m disagreement with the anchor's 17.21m; it is
+not a disagreement, it is noise. The bootstrap mean landing on 17.47m is
+coincidence at that spread, not confirmation.
+
+Projecting the single fit shows the same thing qualitatively: the far soccer
+touchline lands at rows 227-329 against a surface starting at 384-448 -- above the
+turf, the exact failure mode 3.40 caught in PnLCalib.
+
+**Why counting arguments were not enough.** 3.44 established 8 constraints for 8
+DOF by fixing the soccer centre's along-field position and solving for its
+across-field one. That is exactly determined on paper, but numerically the offset
+is near-unidentifiable: a ~90 deg arc pins the circle's radius and its position
+along the arc's own axis, and barely constrains the centre in the perpendicular
+direction -- which is precisely the direction being solved for. Exact
+determination in the DOF count says nothing about conditioning.
+
+Consequence: the across-field placement of the ultimate field still cannot be
+recovered from any single frame tried so far. It needs a frame carrying BOTH
+sidelines, or a much larger arc, or hand-clicked points on the far sideline.

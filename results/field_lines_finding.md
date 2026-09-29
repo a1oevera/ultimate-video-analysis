@@ -2460,3 +2460,40 @@ determination in the DOF count says nothing about conditioning.
 Consequence: the across-field placement of the ultimate field still cannot be
 recovered from any single frame tried so far. It needs a frame carrying BOTH
 sidelines, or a much larger arc, or hand-clicked points on the far sideline.
+
+## 3.46 A second sideline makes the offset identifiable -- but P is not it
+
+Context the user supplied, which reframes the scene: the camera sits at the MIDDLE
+OF A SIDELINE and rotates. So looking toward an endzone, the near sideline recedes
+steeply up-frame while the far sideline ascends gently toward the same vanishing
+point, and a cross-field line (goal line) descends. Line families are told apart
+by which way they tilt relative to the sideline's vanishing point, NOT by image
+angle.
+
+I dismissed candidate P (565px at 168.8deg) as "across-field, not along" because
+its image angle was far from the blue sideline's 128deg. **That is exactly the
+error retracted in 3.35** -- parallel field lines converge, so their image angles
+differ by construction. Repeated within the same session.
+
+**The structural result is real.** Adding any second along-field line collapses
+the across-field offset from unidentifiable to pinned:
+
+| constraints | bootstrap sd of the offset |
+|---|---|
+| near sideline + goal line + arc | **14.97 m** |
+| + a second sideline | **0.12 m** |
+
+So one sideline never determines the width, and two always do. This is the same
+conclusion as 3.34 (both sidelines dominate conditioning), now confirmed on real
+data rather than synthetic.
+
+**But P is not the far sideline.** Forcing P to y=37 wrecked every residual (far
+sideline 432cm, near sideline 79cm vs 2.69cm, circle rms 39cm). Letting its
+across-field position float instead, with everything else well fitted (near
+sideline 2.69cm, goal line 17cm, circle rms 11.7cm), P lands at **y = -0.34 m** --
+on the near sideline itself. P is part of the near sideline, not a second line.
+Its field-plane straightness is 85cm and it survives trimming down to 89 of 608
+pixels, so it is a poor feature regardless.
+
+The far sideline at t=4200 is painted in the endzone only and has not been located
+by any detector run so far.

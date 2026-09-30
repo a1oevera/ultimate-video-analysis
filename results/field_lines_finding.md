@@ -2547,3 +2547,41 @@ from 4.2cm to 80cm, and forcing width=37 gave rms 121cm. The clicked lines and a
 Resolvable by clicking one more object of known size -- the soccer goal in frame
 is 7.32m between posts. If the fit reads it ~9% small the scale is wrong; if it
 reads 7.32m the circle is anomalous.
+
+## 3.48 WFDF confirmed -- so two calibrations disagree by 5-9% and 3.36 is in doubt
+
+The user confirmed the field is standard WFDF (100x37m, 18m endzones). That
+removes explanation 1 from 3.47: the model is correct, and since the five clicked
+lines are correctly labelled, the t=4200 homography's scale is set by real
+geometry.
+
+A hypothesis that the clicked "halfway" might be the prominently painted SOCCER
+halfway rather than the ultimate one was tested and disproved: refitting without
+it, that line lands at ultimate x=51.05m, essentially 50. The soccer halfway would
+pass through the circle centre at x=54.61m.
+
+Circle radius measured through variants of the clicked fit:
+
+| fit | reprojection | circle radius | vs 9.15 |
+|---|---|---|---|
+| 5 lines | 0.97 px | 8.318 m | -9.1% |
+| 4 lines (halfway dropped) | 0.00 px (exact) | 8.710 m | -4.8% |
+
+against the t=3235 anchor's 9.09m from 2290 paint pixels. Two calibrations built
+on the SAME 100x37x18 model disagree about a fixed physical object by 5-9%.
+
+**This puts 3.36 in doubt.** That finding called `calibration_t3235_rowfit`
+"independently verified" because the circle measured 9.09m against an assumed
+regulation 9.15m. If this pitch's circle is actually ~8.3-8.7m, then reading 9.09m
+means that calibration is 5-9% LARGE, and the verification inverted. 3.36's
+reasoning depended on the regulation assumption, which is exactly what is now in
+question. Downstream numbers that rode on it -- the 66.8m pitch width of 3.37 in
+particular -- carry the same uncertainty.
+
+Which calibration is right cannot be settled from internal evidence: t=4200 has
+clean clicked lines and sub-pixel residuals, while t=3235's across-field geometry
+is unsupported (3.42), which would bias its scale; but the clicked fit's own
+5-line and 4-line variants differ by 4.7%, so it is not tightly pinned either.
+
+Needs an object of known size that is NOT the centre circle. The soccer goal is
+7.32m between posts under the Laws of the Game and is visible at t=4200.

@@ -132,19 +132,30 @@ def _orb_chain():
         H, mask = cv2.findHomography(src, dst, cv2.RANSAC, 3.0)
         return H, (int(mask.sum()) if mask is not None else 0)
 
+    # Bridging gaps matters more than it looks. A neighbour-only chain stops dead at
+    # the first production cut or corrupt read, and the first version of this stopped
+    # at t=2795 and t=4310 -- 304 of 1112 samples, 25 minutes of 92. Trying several
+    # recent anchors walks straight over a short cutaway, because the frame after it
+    # usually still overlaps the frame before it.
     chain = {ref_i: (np.eye(3), 999)}
     for step in (1, -1):
+        recent = [ref_i]
         i = ref_i
         while 0 <= i + step < len(files):
-            H, n = pair(i, i + step)
-            if H is None or n < 12:
-                H2, n2 = pair(ref_i, i + step)      # fall back to the reference
-                if H2 is None or n2 < 12:
+            j = i + step
+            got = None
+            for anchor in recent[:6] + [ref_i]:
+                H, n = pair(anchor, j)
+                if H is not None and n >= 12:
+                    got = (chain[anchor][0] @ H, n)
                     break
-                chain[i + step] = (H2, n2)
-            else:
-                chain[i + step] = (chain[i][0] @ H, n)
-            i += step
+            if got is None:
+                # skip this sample and try to reacquire from the next few
+                i = j
+                continue
+            chain[j] = got
+            recent.insert(0, j)
+            i = j
     return files, times, chain
 
 

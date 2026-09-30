@@ -2975,3 +2975,49 @@ from `line_details` only, so a calibration constrained by anything else -- a cir
 here -- is judged on its lines alone and under-rated. It reports the circle-tied fit
 as representing x=81..100m, which is the lines-only answer; the direct jitter test
 above is the one that measures what the fit actually does.
+
+## 3.58 Frames that see the circle AND both sidelines do exist -- 3.51's claim was over-stated
+
+3.51 said no frame carries both the full circle and the near sideline, and guessed
+that was structural to a mid-sideline camera. 3.56 then ended on exactly that
+blocker: the circle cannot tie the two clicked frames because t=4200 measures it at
+x~54m while its own validity stops at 50.7m.
+
+Searched instead of guessed. `run_find_circle_frame.py` scores every sampled frame
+for how much of the circle and how much of each field line falls inside the frame
+AND under a ground-resolution cutoff (0.20 m/px, from the singular values of the
+field->pixel Jacobian -- the same measure `field_visibility` uses, so "well
+resolved" means the same thing here as everywhere else).
+
+**Candidates exist, in the verified chain window:**
+
+| t | circle in frame and resolved | lines | reach |
+|---|---|---|---|
+| 3065 | 69% | 4 incl. both sidelines | x = 10.1 .. 55.7 m |
+| 3070 | 69% | 4 incl. both sidelines | x = 10.1 .. 55.7 m |
+| 3175 | 64% | 4 incl. both sidelines | x = 10.3 .. 54.6 m |
+| 3030 | 58% | 4 incl. both sidelines | x = 6.6 .. 53.4 m |
+| 3020 | 50% | 4 incl. both sidelines | x = 5.6 .. 51.8 m |
+| 2935 | 42% | 4 incl. both sidelines | x = 1.4 .. 50.6 m |
+
+For comparison t=4200 reaches x=51.4m and is valid to 50.7m -- just short of the
+circle. t=3065/3070 reach 55.7m, past it. Checked by eye at full resolution:
+t=2935 has the blue near sideline over ~700px with a large circle arc at the left;
+t=3020 similar with ~500px of blue.
+
+**Why 3.51 was over-strict:** it required the FULL circle. 3.50 had already
+measured that a partial arc is fine for a 3-DOF circle fit (+/-0.5cm on 2589
+points) -- it is only 5-DOF conic fitting that partial arcs break. A 40-70% arc
+plus the near sideline is plentiful; the full circle plus the near sideline may
+well not exist, but it was never the requirement.
+
+**Chain caveat, and a fix.** The chain now spans the whole video -- 1106 of 1112
+samples against 304 before -- by trying several recent anchors rather than only the
+immediate neighbour, which walks over production cuts and the corrupt read at
+t=3175. But coverage is not accuracy: 840 steps from the anchor it is worthless.
+At t=180 the predicted lines land in the top-left corner of a frame whose centre
+circle fills the middle, and at t=3070 (226 steps) the predicted halfway line
+misses the painted one by several hundred pixels. The search is therefore windowed
+to t=2795..4310, the span the neighbour-only chain held unaided, inside which the
+t=3625 prediction was measured against the paint at 21cm (sd 1.6cm). Widening it
+needs a per-frame check, not trust.

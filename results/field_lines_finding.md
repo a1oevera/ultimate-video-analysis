@@ -2887,3 +2887,91 @@ plus reprojection error is not enough on its own.
 
 Consequence for 3.52: the chain is the real link between the two clicked frames,
 and the "direct beats chained" reading that this test first suggested was backwards.
+
+## 3.56 Neither a registration nor a shared circle can tie the two clicked frames
+
+Two ways of combining t=4200 (near end, trusted, sub-pixel) with t=3625 (the only
+view of the far endzone, unstable) were tried. Both fail, for different reasons,
+and both are worth recording because both look obviously right on paper.
+
+**Tie through the inter-frame homography G -- rejected.** The camera is a Veo
+fixed-centre pan, so one homography relates any two frames exactly, and a single
+field homography should explain both: `x_4200 = H X`, `x_3625 = G^-1 H X`. Scoring
+each clicked point in its OWN frame (never transporting points, which would send
+the far-end clicks past t=4200's horizon) the fit converges -- to **3-16px**
+residuals where t=4200 alone is sub-pixel. G is the problem. MEASURED: carrying
+t=3625's sideline clicks into t=4200 with the chained G lands them **16 and 41px**
+off t=4200's own near sideline, and **28 and 61px** off its far sideline. The chain
+accumulates over 115 steps of 480x270 thumbnails, and direct registration cannot
+replace it because the frames share no background (3.55).
+
+**Tie through the shared circle -- also rejected.** The soccer centre circle is one
+physical object both frames see, so requiring both to describe the SAME circle
+should couple them with no G at all. Solved jointly (19 unknowns: two homographies
+plus cx, cy, r), it drags t=4200's clicked lines out to **10.13px** on the goal
+line and 6.35px on the far sideline.
+
+The reason is worth keeping: **t=4200 measures the circle outside its own validity.**
+The circle centre is at field x~54m and t=4200 is valid to 50.7m. `field_visibility`
+says NO at the centre and at three of the circle's four rim points -- only the -x rim
+at 45.3m is inside. Fitted separately the frames put the centre **4.48m apart**
+(t=4200: 53.94, 18.38; t=3625: 49.77, 16.76) while agreeing on the radius to 0.32m.
+A tie has to rest on something both frames see well. Neither sees the circle's
+POSITION well; they only agree on its SIZE.
+
+## 3.57 Circularity alone stabilises the far endzone, and independently says ~8.1-8.3 m
+
+What survives is weaker and self-contained: t=3625's 16 circle clicks must lie on
+SOME circle, of unknown radius at an unknown position. No reference to t=4200, no
+assumed 8.5m or 9.15m. That is still 13 constraints on the homography, anchored at
+x~50m where t=3625 resolves the ground well -- half a field from the endzone lines,
+which is the long baseline the fit was short of.
+
+Fitted that way, `calibration_t3625_circletied.json`:
+
+| line | max | mean |
+|---|---|---|
+| near sideline y=0 | 0.05 px | 0.04 px |
+| far sideline y=37 | 0.63 px | 0.61 px |
+| goal line x=82 | 0.16 px | 0.13 px |
+| end line x=100 | 0.49 px | 0.44 px |
+| centre circle | 15.0 cm | 4.0 cm |
+
+Far-endzone corner movement under 2px of click jitter, at the worst corner (100,37):
+
+| evidence | median | worst |
+|---|---|---|
+| 4 lines only (3.54) | 1.94 m | 8.70 m |
+| + circularity, circle free | 1.37 m | 3.24 m |
+| + circle FIXED to t=4200's | 0.86 m | 2.34 m |
+
+The free version is the deliverable. The fixed version is more stable and
+demonstrably biased -- it bakes in the 4.48m disagreement and its line residuals go
+to 5-15px. A real improvement over lines alone; still an order of magnitude short
+of t=4200.
+
+**Three independent estimates of the circle radius now exist**, and none is 9.15m:
+
+| source | radius |
+|---|---|
+| t=4200 dense paint, through its own calibration (3.51) | 8.515 m |
+| t=4200 re-measured here, ROI-restricted, 2159 inliers, rms 3.4 cm | 8.595 m |
+| t=3625, 16 clicks, circle free, different viewpoint and different lines | 8.070-8.28 m |
+
+They span 8.07-8.60 m. All three are measured through calibrations that cannot
+represent the ground where the circle sits, so this raises confidence that the
+circle is NOT regulation without settling what it is. Regulation 9.15m is 6-13%
+outside the whole spread.
+
+**Method note, again 3.51's rule.** The first re-measurement of the circle at
+t=4200 used no image ROI and returned centre (42.70, 4.60) m, radius **9.321 m**,
+2433 inliers, rms 5.9 cm -- numbers that all look healthy. The overlay showed the
+circle running through the crowd, fitted to spectators' clothing. Restricted to the
+ROI where the arc is actually visible it gives 8.595 m at rms 3.4 cm. No numeric
+test separated them; only the picture did.
+
+**Limitation found in the tooling.** `field_visibility`'s stability test refits
+from `line_details` only, so a calibration constrained by anything else -- a circle
+here -- is judged on its lines alone and under-rated. It reports the circle-tied fit
+as representing x=81..100m, which is the lines-only answer; the direct jitter test
+above is the one that measures what the fit actually does.

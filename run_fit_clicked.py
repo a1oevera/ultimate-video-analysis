@@ -23,8 +23,9 @@ It carries over the guards that were paid for elsewhere:
     are and NOTHING about whether the labelling is right. Five lines is the first
     number that means something.
 
-  * A BROKEN FIT (validity under 20%) is saved under a _REJECTED name so it cannot
-    be picked up by mistake.
+  * A BROKEN FIT (under 20% of the field representable) is saved under a _REJECTED
+    name so it cannot be picked up by mistake. Coverage is measured side-agnostically
+    -- see coverage() for why the obvious function is wrong for a far-end fit.
 
 Run:  python3 run_fit_clicked.py [clicked.json] [--out NAME] [--force]
 Then: python3 run_ground_check.py <the frame>   -- the scale-independent check
@@ -40,7 +41,26 @@ import numpy as np
 from frisbee_analysis import UltimatePitchConfiguration
 from frisbee_analysis.calibration import (fit_calibration_with_lines,
                                           check_line_reprojection_error,
-                                          field_validity_region)
+                                          field_visibility)
+
+
+def coverage(calib, cfg):
+    """Which stretch of field this calibration can actually represent.
+
+    NOT field_validity_region. That returns a scalar usable_x_max which every
+    caller reads as "usable where x <= this", silently assuming the camera stands
+    at the x=0 end. MEASURED on this very frame: the t=3625 FAR-endzone fit, which
+    is anchored on x=82..100m and projects that end cleanly, was reported as
+    "valid to x=7.0m (7%), THIS FIT IS BROKEN" -- the scalar measured the one strip
+    of field the calibration knows nothing about. field_visibility is side-agnostic:
+    it asks which side of the horizon the calibration's OWN evidence sits on."""
+    gx, gy = np.meshgrid(np.linspace(0, cfg.length, 201),
+                         np.linspace(0, cfg.width, 41))
+    vis = field_visibility(calib, gx, gy, cfg)
+    if not vis.any():
+        return None, None, 0.0
+    xs = gx[vis]
+    return xs.min() / 100.0, xs.max() / 100.0, float(vis.mean())
 
 # The two ends are 82m apart in the model and the picture does not say which one
 # you were looking at, so run_click_lines.py records it and this honours it.
@@ -104,14 +124,47 @@ if len(edges) == 4:
     print("  NOTE 4 lines determine a homography EXACTLY -- these numbers say how\n"
           "  straight your clicks are, not whether the labelling is right. Add a 5th.")
 
-vr = field_validity_region(calib, cfg)
-frac = vr["usable_fraction"]
-print(f"  valid to x={vr['usable_x_max'] / 100:.1f}m ({frac * 100:.0f}%)")
+x_lo, x_hi, frac = coverage(calib, cfg)
+if frac:
+    print(f"  can represent field x = {x_lo:.1f} .. {x_hi:.1f} m  ({frac * 100:.0f}% of the field)")
+else:
+    print("  can represent NO part of the field")
 
-broken = frac < 0.20
+# A LOCAL calibration is not a broken one. A frame that shows only the far endzone
+# can represent only the far endzone -- 8% of the field is the CORRECT answer there,
+# not a failure. What would be a failure is a fit that cannot represent the very
+# lines it was fitted from, because then nothing it says is supported by anything.
+# The evidence is WHERE YOU CLICKED, not the model vertices. A sideline edge runs
+# (1,7) -- the full 100m -- so its vertices sit at both ends of the field, and a
+# far-end fit legitimately cannot represent the x=0 one. Checking those would
+# condemn every local calibration. Push the clicked PIXELS through instead.
+Hf2i = np.linalg.inv(np.asarray(calib.H()))
+ev = np.array([p for e in edges for p in lines[e]], float)
+q = np.asarray(calib.H()) @ np.column_stack([ev, np.ones(len(ev))]).T
+ev_f = (q[:2] / q[2]).T
+ev_ok = field_visibility(calib, ev_f[:, 0], ev_f[:, 1], cfg)
+broken = ev_ok.mean() < 0.75
+print(f"  covers {ev_ok.sum()}/{len(ev)} of the points that were actually clicked")
 if broken:
-    print("\n  *** THIS FIT IS BROKEN. The horizon lands on the field, so almost\n"
-          "  *** nothing is legal to draw. That is the symptom, not the cause.")
+    # Say WHICH of field_visibility's three tests failed. An earlier version of this
+    # message blamed the horizon for what was actually a stability failure, which
+    # points at the wrong remedy: a horizon problem means the labelling is wrong,
+    # an instability means the clicks are too short or too close together.
+    Hf = np.linalg.inv(np.asarray(calib.H()))
+    w = Hf[2, 0] * ev_f[:, 0] + Hf[2, 1] * ev_f[:, 1] + Hf[2, 2]
+    vv = np.array([cfg.vertices[v - 1] for e in edges for v in e], float)
+    want = np.sign(np.median(Hf[2, 0] * vv[:, 0] + Hf[2, 1] * vv[:, 1] + Hf[2, 2]))
+    behind = int((np.sign(w) != want).sum())
+    if behind:
+        print(f"\n  *** {behind} clicked points are BEHIND THE HORIZON from the camera.")
+        print("  *** That is a labelling error, not a precision one -- two of these lines")
+        print("  *** cannot both be where they are said to be.")
+    else:
+        print("\n  *** Every clicked point is in front of the camera, so the LABELLING is")
+        print("  *** consistent. What fails is stability: re-fitting from your own clicks")
+        print("  *** jittered by 2px moves the answer further than 20px on the ground.")
+        print("  *** Remedy is conditioning, not relabelling -- click each line over the")
+        print("  *** longest stretch of paint you can see, and add a fifth line.")
     if len(edges) >= 5:
         print("\n  dropping each line in turn (a big jump = that line is the liar):")
         for e in edges:
@@ -121,7 +174,7 @@ if broken:
                     image_points=[], keypoint_indices=[], image_path=tag,
                     line_image_points=[lines[x] for x in sub],
                     line_field_edges=sub, cfg=cfg)
-                f2 = field_validity_region(c2, cfg)["usable_fraction"]
+                f2 = coverage(c2, cfg)[2]
             except Exception:
                 f2 = 0.0
             print(f"    without {NAMES[e]:22s} -> {f2 * 100:5.1f}% usable")

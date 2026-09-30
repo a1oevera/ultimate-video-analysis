@@ -2807,3 +2807,83 @@ every wrong calibration in this project and no statistic has.
 model and nothing in the picture says which one is in view, so the end is recorded
 at click time by the person who can tell, and the fit reads it. Without this the
 far-end clicks would silently be fitted as x=18/x=0 instead of x=82/x=100.
+
+## 3.54 The far-endzone clicks are labelled correctly and conditioned badly
+
+Five lines were clicked at t=3625 with `--end far`: near sideline, far sideline,
+goal line x=82, end line x=100, plus 16 centre-circle points. The fit is exact on
+all four lines (0.00px -- 4 lines determine a homography exactly and each had 2
+points, so that number is vacuous) and was rejected.
+
+**The labelling is right.** Two independent checks, neither using the fit itself:
+
+- pushed through the chained homography (verified to 1.6cm in 3.52), the two
+  near-sideline clicks land at field y = 0.24 and 0.22 m, and the far-sideline
+  clicks at a constant y. Constant-y lines are sidelines.
+- the two cross lines come out at constant x, **19.4 m apart**. A WFDF endzone is
+  18 m. Nothing in the clicking could have produced that by accident.
+
+Every clicked point is also in front of the camera under the fit, so the horizon
+has not landed between the camera and any line -- the failure mode that does mean
+a labelling error.
+
+**What fails is conditioning.** Re-fitting 200 times from the same clicks jittered
+by 2px moves the far endzone on the ground by:
+
+| corner | median | 90th pct | max |
+|---|---|---|---|
+| goal line x=82, y=0 | 0.25 m | 0.55 m | 0.93 m |
+| goal line x=82, y=37 | 0.91 m | 1.61 m | 2.74 m |
+| end line x=100, y=0 | 0.49 m | 1.17 m | 1.94 m |
+| end line x=100, y=37 | **1.94 m** | 3.88 m | **8.70 m** |
+
+The driver is the far sideline: the clicked segment is **112 px long and sits at
+the horizon** (rows 366-376), against 361-985 px for the other three. That is not
+a clicking mistake, it is structural -- the far sideline is painted only inside the
+endzone, and from a mid-sideline camera looking down the field that paint is a
+short stroke at the vanishing point. The y=37 corners are the ones that suffer,
+exactly as expected.
+
+Useful part: the fit is stable where it matters most. Per-point median shift under
+2px jitter is 3.4px at (82,0), 13.8px at (82,34), 3.8px at (100,0) -- it is the
+y=37 side and the near-sideline clicks out at x=57-68m that blow up.
+
+**REJECTED message corrected.** The first version blamed the horizon for what is a
+stability failure. That points at the wrong remedy: a horizon failure means
+relabel, an instability means click longer strokes and add a line. The script now
+distinguishes them by testing the w-sign of the clicked points directly.
+
+**Also corrected: coverage was measured backwards.** `run_fit_clicked.py` first
+reported "valid to x=7.0m (7%), THIS FIT IS BROKEN" for a fit anchored at x=82..100
+and projecting it cleanly. Cause: `field_validity_region` returns a scalar
+`usable_x_max` that assumes the camera stands at the x=0 end, so it measured the
+one strip of field this calibration knows nothing about. `field_visibility` is the
+side-agnostic replacement and already existed with this failure documented in its
+docstring -- `run_field_rectify.py` had hit it before. Using it, the calibration
+reports the truth: it can represent x = 71 .. 100 m.
+
+## 3.55 Two non-overlapping frames register at 180 inliers if the scoreboard is not masked
+
+Direct registration of t=3625 to t=4200 -- to replace the 115-step chain with one
+hop -- returned **180 RANSAC inliers at 0.11px median reprojection**, and the
+homography was the identity to within 2.3px. The two frames point at opposite ends
+of the field 4.3 minutes apart and share no background at all.
+
+Cause: `MosaicConfig.overlay_mask_boxes` defaults to `()`, and this call did not
+pass any. 178 of the 180 inliers were inside the broadcast scoreboard, the other 2
+in the Veo watermark. The scoreboard is pixel-identical between any two frames, so
+it matches itself perfectly at the identity, and nothing in the inlier count or the
+reprojection error says so.
+
+With `overlay_boxes_for("videos/torovcanyon.mp4", 1920, 1080)` -- `[(0,0,750,150),
+(1600,950,1920,1080)]` -- the same pair gives **5 inliers**, correctly under
+`min_inliers=15`, and is rejected.
+
+Not a pipeline bug: every production caller already passes these boxes. It is a
+footgun in the default, and the measured number is worth having -- a confident
+false match here looks exactly like a good one. The existing coverage guard would
+have caught it, but only barely (0.123 against a 0.15 threshold), so inlier count
+plus reprojection error is not enough on its own.
+
+Consequence for 3.52: the chain is the real link between the two clicked frames,
+and the "direct beats chained" reading that this test first suggested was backwards.

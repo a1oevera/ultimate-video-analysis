@@ -2674,3 +2674,45 @@ map. Discarded.
 Settling 8.5 vs 9.15 needs ultimate lines clicked on a frame where the whole
 circle is visible, so that a full-circle measurement can be made in a metric
 anchored to confirmed WFDF geometry. t=1700 is such a frame.
+
+## 3.51 Status: the clicked t=4200 calibration is the best available, and the circle is ~8.5 m
+
+**The full-circle confirmation is not obtainable.** Attempts:
+
+- t=1700 lines: the near sideline is out of view, leaving one along-field line and
+  three cross-field lines. Three parallel field lines are concurrent at infinity,
+  so a 4-line fit there is degenerate -- it returned a radius of 2e15 m and could
+  not satisfy its own inputs (halfway line off by 74px).
+- t=1700 lines + circularity constraint (radius free, breaking the degeneracy):
+  converged but badly, 46-56cm residuals on every constraint against t=4200's 5cm,
+  giving 6.43m. Not usable. The cross-field lines there are 62-239px long, bunched
+  at the horizon in one corner.
+- registration from t=1700 to t=4200: maps the circle to x=-5968..220, essentially
+  outside the frame; the composed transform yields a two-lobed ellipse (12.4%
+  sector spread). Invalid.
+- searching for a frame with BOTH the full circle and the blue near sideline: none
+  found. This looks structural -- the camera sits mid-sideline, so looking at
+  midfield puts the circle close and overflowing the frame, while looking down the
+  field takes the near sideline out of view. A "12/12 sectors" reading at t=2700
+  was an artifact of the circle blob merging with the halfway line.
+
+**Where that leaves it.** `calibration_t4200_clicked.json` is the best calibration
+in the project:
+
+- five user-identified lines, sub-pixel reprojection on all five (max 0.97px)
+- labelling confirmed against every alternative assignment (0.97px vs 12.83px)
+- field dimensions confirmed WFDF by the user
+- passes the ground-surface check: all seven projected lines land on turf or in
+  the transition band, none above it (this check is independent of scale)
+- validity 50.7m (51% of the field)
+
+Its measurement of the soccer centre circle is **8.515 m** (2589 dense paint px,
+0.8% sector spread), against the retracted anchor's 9.09m. The anchor's inputs are
+known bad -- a 2-point phantom near sideline and a far sideline fitted to a row of
+standing people that the user rejected on sight -- so the clicked figure is the one
+to carry forward.
+
+Confidence: moderate, not high. The 120-degree arc cannot itself confirm the
+homography (3.50), so the support for 8.5m rests on the five clicked lines being
+accurately placed, which the sub-pixel residual and the ground check corroborate
+but do not prove.

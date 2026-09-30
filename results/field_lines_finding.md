@@ -2497,3 +2497,53 @@ pixels, so it is a poor feature regardless.
 
 The far sideline at t=4200 is painted in the endzone only and has not been located
 by any detector run so far.
+
+## 3.47 Clicked calibration at t=4200: excellent fit, 9% scale gap against the circle
+
+`run_click_lines.py` was built so the user could mark lines directly. Five lines
+clicked at t=4200, and the far sideline turned out to be at the upper LEFT
+(544-780, 360-386) -- every detector search had been on the right.
+
+Fit from the five ultimate lines only, with the soccer circle held back:
+
+| line | max reprojection |
+|---|---|
+| near sideline | 0.88 px |
+| far sideline | 0.28 px |
+| goal line | 0.97 px |
+| end line | 0.60 px |
+| halfway | 0.33 px |
+
+Sub-pixel on all five. Validity 50.7m (51%). Saved as
+`calibration_t4200_clicked.json`.
+
+**The labels are right.** Testing every monotonic assignment of legal x values to
+the three cross-field lines, the user's (halfway 50, goal 18, end 0) wins at
+0.97px against 12.83px for the next best. Sideline swaps and end-for-end
+reflections give identical scale, as they must.
+
+**But the independent check disagrees by 9%.** The clicked centre-circle arc maps
+to radius **8.318 m** against a regulation 9.15 m (-9.1%), with only 4.2cm
+residual -- the arc is a clean circle, just the wrong size. Click noise does not
+explain it: perturbing the six points by 1px moves the radius by sd 0.14m, so the
+0.83m gap needs ~6px of error.
+
+This contradicts the t=3235 anchor, which measured the same physical circle at
+9.09m from 2290 real paint pixels. Both fits use the same 100x37x18 model, so the
+two homographies disagree about the world by 9%.
+
+Two explanations remain, and reprojection cannot separate them: a uniform scale
+error is invisible to reprojection, since scaling the field model just rescales H.
+
+1. the field is ~10% larger than 100x37 with 18m endzones
+2. this pitch's centre circle is not 9.15m
+
+Attempts to resolve it by solving for the dimensions failed: with both width and
+endzone depth free the optimiser collapsed the field to zero width (degenerate,
+all residuals 0); bounded, the width ran to its 20m limit with circle rms blowing
+from 4.2cm to 80cm, and forcing width=37 gave rms 121cm. The clicked lines and a
+9.15m circle are genuinely inconsistent.
+
+Resolvable by clicking one more object of known size -- the soccer goal in frame
+is 7.32m between posts. If the fit reads it ~9% small the scale is wrong; if it
+reads 7.32m the circle is anomalous.

@@ -2585,3 +2585,56 @@ is unsupported (3.42), which would bias its scale; but the clicked fit's own
 
 Needs an object of known size that is NOT the centre circle. The soccer goal is
 7.32m between posts under the Laws of the Game and is visible at t=4200.
+
+## 3.49 RETRACTION of 3.36: the centre circle here is NOT 9.15 m
+
+The goal-width test is unavailable at t=4200: both visible "goals" are stored
+spare goals sitting OFF the pitch (two side by side at upper left, a stack lying
+on its side at the right). Posts not on a goal line, and a tilted frame breaks a
+ground-plane measurement anyway.
+
+Instead, the circle was measured through the clicked calibration using DENSE paint
+pixels -- the same method used at t=3235, so the two are directly comparable:
+
+| calibration | arc pixels | radius | sector spread | rms |
+|---|---|---|---|---|
+| t=4200 clicked | 2589 | **8.515 m** | 0.8% | 5.0 cm |
+| t=3235 anchor | 2290 | **9.09 m** | 1.6% | 7.6 cm |
+
+Both are tight and well conditioned, and they disagree by 6.8% about one physical
+object. They also place its centre 6.7m apart in ultimate coordinates ((53.87,
+18.33) vs (47.13, 17.21)).
+
+**The clicked calibration is the one to believe**, because its inputs are sound
+where the anchor's are not:
+
+- t=4200: five user-identified lines, sub-pixel reprojection on all five, field
+  dimensions confirmed WFDF by the user, labelling confirmed by beating every
+  alternative assignment 0.97px to 12.83px.
+- t=3235: four lines, of which the near sideline is a 2-point phantom and the far
+  sideline is a row of standing people spanning 18m in field coordinates (3.42) --
+  and the user rejected that far sideline on sight.
+
+So this pitch's centre circle is about **8.5 m radius, not the regulation 9.15 m**.
+That is plausible for a multi-sport turf facility carrying dashed markings for
+other sports and storing its goals off-field; an 8m circle is a standard youth
+size.
+
+**Therefore 3.36 is retracted.** It declared `calibration_t3235_rowfit`
+"independently verified" because the circle measured 9.09m against an ASSUMED
+regulation 9.15m. With the true radius near 8.5m, that reading means the anchor
+reads about 7% LARGE, so the test inverted: it certified a mis-scaled calibration.
+The error was assuming a regulation value for the very quantity being used as
+ground truth.
+
+Consequences:
+- 3.37's soccer pose (centre at ultimate (47.13,17.21), pitch width 66.8m) derives
+  from the anchor and inherits the ~7% scale error and the 6.7m centre offset.
+- 3.41's ground check still stands -- it tests whether lines land on turf, which
+  scale error does not affect.
+- 3.39's PnLCalib circle measurements assumed 9.15m and are re-opened: PnLCalib's
+  model has 9.15m baked in, so on a pitch with an 8.5m circle its fits cannot be
+  scored that way at all.
+
+`calibration_t4200_clicked.json` is now the best calibration in the project:
+5 lines, sub-pixel, user-verified labels, 51% validity.

@@ -2716,3 +2716,54 @@ Confidence: moderate, not high. The 120-degree arc cannot itself confirm the
 homography (3.50), so the support for 8.5m rests on the five clicked lines being
 accurately placed, which the sub-pixel residual and the ground check corroborate
 but do not prove.
+
+## 3.52 Finding frames that show the far endzone, and proof the far end is out of reach by extrapolation
+
+The far endzone (x=82-100m) has never been calibrated, and `calibration_t4200_clicked`
+stops being valid at 50.7m. Scrubbing 92 minutes by eye to find frames that show
+the far end is slow, so it was turned into a measurement. `run_pan_extent.py`:
+
+1. samples the video every 5s (1112 thumbnails),
+2. chains consecutive frame-to-frame homographies out from t=4200 -- valid to do
+   because the camera is a Veo fixed-centre virtual pan, so the homographies
+   compose exactly,
+3. pushes each frame's footprint through the clicked calibration and reports the
+   field x-range it sees.
+
+**The chain itself is sound.** MEASURED at t=3625: the chained prediction of the
+near sideline lands on the actual blue paint at field y = **+21cm, sd 1.6cm** over
+14 independent image rows. Nothing in that frame was used to fit it -- it came
+from t=3625 being 115 chained 5s steps away from t=4200. t=3970 and t=3320 gave
+sd 456cm and 538cm on the same test, but from contamination (blue kit and blue
+cones enter the paint mask), not from a worse chain.
+
+**The along-field extrapolation is not sound, and fails structurally rather than
+gradually.** In `chain_overlay_3625.jpg` the projected x=100 end line comes out
+nearly PARALLEL to the projected y=37 sideline. On a real field those are
+perpendicular. Both have been pushed past the calibration's horizon, where the
+projection folds -- so the failure is not "a few metres off", it is the wrong
+geometry entirely. This is the 50.7m validity figure being honest.
+
+Consequence: the ranking is usable, the x numbers are not. Every candidate still
+has to be clicked and fitted on its own.
+
+**Coverage caveat.** The chain holds over t=2795..4310 only (304 of 1112 samples)
+and breaks outside that -- partly on camera cuts, partly on a corrupt region in
+the file (a sequential read dies at t=3175s, ffmpeg "partial file" at byte 1.25GB
+of 2.07GB; seeking reads past it, which is why the scan needs two passes). So this
+searched 25 minutes of the 92, not all of it. It found candidates, so extending
+the search was not needed; if more are wanted later, re-anchor the chain inside
+another window.
+
+**Candidates, best first.** t=**3625** is the pick: game clock 48:33, the point is
+dead so only three people are on the field, and it is the frame whose chain was
+verified to 1.6cm. t=3655 is the same shot a little later; t=3970 and t=3320 show
+the same end with play in progress and more occlusion.
+
+What t=3625 appears to carry, for whoever clicks it: the blue near sideline
+(confirmed), a white line across the upper field, and a line of cones running down
+from a red cone that sits on the blue paint. The cone line is NOT parallel to the
+blue line in the image, so it is a genuinely different ground line -- plausibly the
+far goal line or end line, but this is the exact class of call that has been got
+wrong four times in this project (3.29, 3.33, 3.41, 3.44) and it is not being
+guessed again here. It gets clicked.

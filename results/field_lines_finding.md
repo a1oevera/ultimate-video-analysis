@@ -2760,13 +2760,27 @@ dead so only three people are on the field, and it is the frame whose chain was
 verified to 1.6cm. t=3655 is the same shot a little later; t=3970 and t=3320 show
 the same end with play in progress and more occlusion.
 
-What t=3625 appears to carry, for whoever clicks it: the blue near sideline
-(confirmed), a white line across the upper field, and a line of cones running down
-from a red cone that sits on the blue paint. The cone line is NOT parallel to the
-blue line in the image, so it is a genuinely different ground line -- plausibly the
-far goal line or end line, but this is the exact class of call that has been got
-wrong four times in this project (3.29, 3.33, 3.41, 3.44) and it is not being
-guessed again here. It gets clicked.
+What t=3625 carries, for whoever clicks it: the blue near sideline (confirmed by
+the 1.6cm chain check above), white paint crossing the upper field, and a line of
+cones running down from a red cone sitting on the blue paint.
+
+**The cones are not a field line.** The user identified them: they mark the space
+observers must stay behind, so they run parallel to the sideline at an unknown
+offset outside it. They must not be clicked as a boundary.
+
+RETRACTED, and it is the fifth time (after 3.29, 3.33, 3.41, 3.44): the first
+version of this finding argued the cone line "is NOT parallel to the blue line in
+the image, so it is a genuinely different ground line -- plausibly the far goal
+line or end line". That inference is invalid. Two parallel ground lines diverge in
+the image as they approach the camera and converge toward their vanishing point --
+which is exactly what the cones and the blue paint do, and exactly why the red cone
+appears to sit ON the blue line near the top. This is the same error as the
+retracted 25-degree orientation guard (3.34) and the "across-field" dismissal of
+candidate P (3.44): reading image angle as world angle. The rule that keeps being
+relearned is that NO argument from apparent angle is admissible on this footage.
+
+The cones may still be worth something later -- a line known to be parallel to the
+sideline is a real constraint even with an unknown offset -- but not as a boundary.
 
 ## 3.53 The clicked-lines fit is written down, and verified against the known-good case
 

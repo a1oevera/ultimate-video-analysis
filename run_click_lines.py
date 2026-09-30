@@ -88,13 +88,26 @@ def on_mouse(ev, x, y, flags, _):
 
 
 def save():
+    """Merge into any existing file for the SAME frame rather than replacing it.
+    The first version overwrote, so clicking lines in a second session silently
+    destroyed circle points clicked in the first."""
+    existing = {}
+    if os.path.exists(out_path):
+        try:
+            old = json.load(open(out_path))
+            if old.get("source") == tag:
+                existing = {L["name"]: L["points"] for L in old.get("lines", [])}
+        except Exception:
+            pass
+    for i in range(len(LINES)):
+        if pts[i]:
+            existing[LINES[i][0]] = pts[i]      # this session wins for lines touched
     data = {"source": tag, "frame_size": [FW, FH],
-            "lines": [{"name": LINES[i][0], "points": pts[i]}
-                      for i in range(len(LINES)) if pts[i]]}
+            "lines": [{"name": k, "points": v} for k, v in existing.items()]}
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(data, f, indent=2)
-    print(f"\nsaved {out_path}")
+    print(f"\nsaved {out_path} (merged with anything already there for this frame)")
     for L in data["lines"]:
         print(f"  {L['name']}: {len(L['points'])} points")
 

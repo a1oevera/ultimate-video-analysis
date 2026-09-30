@@ -2638,3 +2638,39 @@ Consequences:
 
 `calibration_t4200_clicked.json` is now the best calibration in the project:
 5 lines, sub-pixel, user-verified labels, 51% validity.
+
+## 3.50 What a partial arc can and cannot do
+
+User asked whether it matters that the pitch's full circle is not visible at
+t=4200 (120 deg of arc). Two different questions, with different answers.
+
+**Fitting a circle in FIELD coordinates (3 DOF), given a correct homography:**
+120 deg is ample. Simulating a true 9.15m circle over the observed range with the
+observed 5cm scatter and 2589 points recovers 9.143 +/- 0.005 m. Correlated error
+cannot rescue 9.15 either -- a 50cm systematic radial wobble still fits at 8.71m,
+nowhere near 8.515m.
+
+**Fitting a conic (5 DOF) to test whether the mapped shape IS circular:** 120 deg
+is NOT enough. Using the user's 29 clicked points around the FULL circle at
+t=1700 and refitting from 120-degree windows of the same data:
+
+| | centre offset | major axis | axis ratio |
+|---|---|---|---|
+| full circle | -- | 1109.6 | 3.976 |
+| 120 deg windows | 9-130 px | 1021-1372 (+/-15%) | 3.454-4.482 (+/-13%) |
+
+So the 8.515m radius is reliable GIVEN the homography, but the arc cannot confirm
+the homography -- which is the disputed point. This also explains 3.36's trap more
+precisely than that entry did: it is 5-DOF conic fitting that partial arcs break,
+not 3-DOF circle fitting.
+
+**Registration across frames does not substitute.** Registering t=1700 to t=4200
+(SIFT, 91/239 inliers) and composing with the clicked calibration maps the circle
+to x=-5968..220, almost entirely outside the t=4200 frame. The result --  radius
+9.657m, rms 55.9cm, sector spread 12.4% with radii alternating 10.27/9.30/9.25/
+10.25 -- is a two-lobed ellipse, i.e. the composed transform is not a valid ground
+map. Discarded.
+
+Settling 8.5 vs 9.15 needs ultimate lines clicked on a frame where the whole
+circle is visible, so that a full-circle measurement can be made in a metric
+anchored to confirmed WFDF geometry. t=1700 is such a frame.

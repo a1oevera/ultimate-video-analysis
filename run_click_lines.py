@@ -12,6 +12,7 @@ Run:
     python3 run_click_lines.py videos/torovcanyon.mp4 4200
     python3 run_click_lines.py outputs/diagnostics/frame_4200.jpg
     python3 run_click_lines.py videos/torovcanyon.mp4 4200 --out mypoints.json
+    python3 run_click_lines.py videos/torovcanyon.mp4 3625 --end far
 """
 import sys
 import os
@@ -22,11 +23,18 @@ import cv2
 LINES = [
     ("near sideline", "the blue painted one nearest the camera", (255, 120, 0)),
     ("far sideline", "painted in the endzone only; extend it", (0, 220, 255)),
-    ("goal line", "endzone line, 18m from the end", (0, 255, 0)),
+    ("goal line", "endzone line, 18m in from the end line", (0, 255, 0)),
     ("end line", "the very back of the endzone", (0, 160, 0)),
     ("halfway", "midfield, 50m", (255, 0, 255)),
     ("soccer centre circle", "click along the painted arc", (0, 0, 255)),
 ]
+
+# WHICH endzone the "goal line" and "end line" clicks belong to. The two ends are
+# 82m apart in the model and nothing in the picture says which one you are looking
+# at, so it is recorded at click time by the person who can actually tell, rather
+# than inferred later. --end near => goal x=18, end line x=0
+#                        --end far  => goal x=82, end line x=100
+END = "far" if "--end" in sys.argv and sys.argv[sys.argv.index("--end") + 1] == "far" else "near"
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 out_path = "outputs/diagnostics/clicked_lines.json"
@@ -102,7 +110,7 @@ def save():
     for i in range(len(LINES)):
         if pts[i]:
             existing[LINES[i][0]] = pts[i]      # this session wins for lines touched
-    data = {"source": tag, "frame_size": [FW, FH],
+    data = {"source": tag, "end": END, "frame_size": [FW, FH],
             "lines": [{"name": k, "points": v} for k, v in existing.items()]}
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w") as f:
@@ -114,7 +122,8 @@ def save():
 
 cv2.namedWindow("click lines", cv2.WINDOW_AUTOSIZE)
 cv2.setMouseCallback("click lines", on_mouse)
-print(f"\n{tag}  ({FW}x{FH})\n")
+print(f"\n{tag}  ({FW}x{FH})   endzone: {END.upper()}"
+      f"  (goal x={18 if END == 'near' else 82}m, end line x={0 if END == 'near' else 100}m)\n")
 for i, (nm, hint, _) in enumerate(LINES):
     print(f"  {i+1}  {nm:22s} {hint}")
 print("\nclick = add a point (2+ per line)   z = undo   c = clear this line")

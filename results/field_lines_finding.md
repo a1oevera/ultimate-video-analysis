@@ -2767,3 +2767,29 @@ blue line in the image, so it is a genuinely different ground line -- plausibly 
 far goal line or end line, but this is the exact class of call that has been got
 wrong four times in this project (3.29, 3.33, 3.41, 3.44) and it is not being
 guessed again here. It gets clicked.
+
+## 3.53 The clicked-lines fit is written down, and verified against the known-good case
+
+Turning a `run_click_lines.py` file into a calibration existed only as ad-hoc
+interactive code. That meant `calibration_t4200_clicked.json` -- the best
+calibration in the project -- could not be re-derived, and a second frame could
+not be fitted without redoing the same manual work by hand. `run_fit_clicked.py`
+is that step written down.
+
+VERIFIED: rebuilt from t=4200's stored `line_details`, it reproduces the recorded
+result exactly -- per-line max 0.97px (end line 0.60, near sideline 0.88, far
+sideline 0.28, goal line 0.97, halfway 0.33) and validity 50.7m / 51%. Run against
+the t=1700 file, which is missing the near sideline, it refuses with the measured
+reason rather than producing the degenerate fit that file is known to give.
+
+It carries the guards already paid for: both sidelines or no fit (--force
+overrides); no angle test (retracted in 3.34 and not reintroduced); an explicit
+note that a 4-line fit is exact so its residual says nothing about labelling; a
+_REJECTED filename for any fit whose validity falls under 20%; and an overlay of
+the whole model back on the frame, because looking at one of those is what caught
+every wrong calibration in this project and no statistic has.
+
+`run_click_lines.py` gained `--end near|far`. The two endzones are 82m apart in the
+model and nothing in the picture says which one is in view, so the end is recorded
+at click time by the person who can tell, and the fit reads it. Without this the
+far-end clicks would silently be fitted as x=18/x=0 instead of x=82/x=100.

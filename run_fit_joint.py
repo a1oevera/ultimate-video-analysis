@@ -67,6 +67,9 @@ NAMES = {(1, 7): "near sideline y=0", (2, 8): "far sideline y=37",
          (5, 6): "goal line x=82", (7, 8): "end line x=100",
          (11, 12): "halfway x=50"}
 cfg = UltimatePitchConfiguration()
+# WITHDRAWN as a measurement (3.59): t=4200 reaches x=34.5m and the circle is at
+# x~50m, so this was taken 15m outside validity. Kept ONLY as a --fixed-circle
+# option and a fallback seed; the default free fit never uses it as truth.
 CX, CY, R = np.load("outputs/diagnostics/circle_field_t4200.npy")
 
 
@@ -87,9 +90,7 @@ def scale_px_per_cm(Hf, x, y):
         p = Hf @ np.stack([a, b, np.ones_like(a)])
         return p[:2] / p[2]
     p0 = proj(x, y)
-    jx = proj(x + 1.0, y) - p0
-    jy = proj(x, y + 1.0) - p0
-    return np.hypot(*jx) * 0.5 + np.hypot(*jy) * 0.5
+    return np.hypot(*(proj(x + 1.0, y) - p0))
 
 
 def make_residuals(lines, circle, free=True, w=1.0):
@@ -122,8 +123,7 @@ lines = {table[L["name"]]: np.array(L["points"], float)
 circle = np.array(next((L["points"] for L in d["lines"]
                         if L["name"] == "soccer centre circle"), []), float)
 
-print(f"circle from t=4200: centre ({CX/100:.2f}, {CY/100:.2f}) m, radius {R/100:.3f} m")
-print(f"t=3625 evidence: {len(lines)} lines, {len(circle)} circle points\n")
+print(f"evidence: {len(lines)} lines, {len(circle)} circle points\n")
 
 # BOUNDS AND MULTI-START, because an unbounded free circle runs away. MEASURED at
 # t=2935 and t=3020: from the lines-only fit as a start, the optimiser settled on a
@@ -136,7 +136,13 @@ print(f"t=3625 evidence: {len(lines)} lines, {len(circle)} circle points\n")
 W_CIRCLE = float(sys.argv[sys.argv.index("--w") + 1]) if "--w" in sys.argv else None
 R_BOUNDS = (500.0, 1500.0)
 FREE = "--fixed-circle" not in sys.argv
-start = Calibration.load("outputs/calibration/calibration_t3625_clicked_REJECTED.json")
+cands = [f"outputs/calibration/calibration_t{stem}_clicked_REJECTED.json",
+         f"outputs/calibration/calibration_t{stem}_clicked.json"]
+start_path = next((c for c in cands if os.path.exists(c)), None)
+if start_path is None:
+    sys.exit(f"no lines-only fit to start from; run run_fit_clicked.py on {src} first")
+print(f"starting from {start_path}")
+start = Calibration.load(start_path)
 Hf0 = np.linalg.inv(np.asarray(start.H())); Hf0 /= Hf0[2, 2]
 v0 = np.concatenate([Hf0.ravel()[:8], [CX, CY, R]])
 
@@ -145,16 +151,59 @@ f = make_residuals(lines, circle, FREE, w)
 if FREE and len(circle):
     lo = np.concatenate([np.full(8, -np.inf), [3000., -2000., R_BOUNDS[0]]])
     hi = np.concatenate([np.full(8, np.inf), [8000., 6000., R_BOUNDS[1]]])
+    # SEEDING, in two stages, because neither a guess nor the data alone is enough.
+    # MEASURED: hardcoded starts at centre y=18.4m could not reach t=2935's solution
+    # at y=15.35m (it returned an 11.0m circle with 507px lines, cost 3.5e5, where
+    # starting near the answer gives cost 41.3 with sub-pixel lines). Seeding from
+    # the clicks instead works at t=3625 but not at t=2935/t=3020, whose lines-only
+    # homography is unstable exactly where the arc sits -- it put the circle centre
+    # at (69.1, -8.6)m, outside the field. So: use the data seed when it is
+    # physically plausible, and in every case sweep a coarse grid cheaply and refine
+    # only the best few. Cost separates these by four orders of magnitude, so picking
+    # the winner is not a close call.
+    seeds = []
+    try:
+        q = np.linalg.inv(unpack(Hf0.ravel()[:8])) @ np.column_stack(
+            [circle, np.ones(len(circle))]).T
+        fx, fy = q[0] / q[2], q[1] / q[2]
+        A = np.column_stack([fx, fy, np.ones(len(fx))])
+        abc = np.linalg.lstsq(A, fx ** 2 + fy ** 2, rcond=None)[0]
+        cx0, cy0 = abc[0] / 2, abc[1] / 2
+        r0 = np.sqrt(max(abc[2] + cx0 ** 2 + cy0 ** 2, 1.0))
+        if 2000 < cx0 < 8000 and 0 < cy0 < 3700 and R_BOUNDS[0] < r0 < R_BOUNDS[1]:
+            seeds.append([cx0, cy0, r0])
+            print(f"  circle seeded from the clicks at ({cx0/100:.1f}, {cy0/100:.1f}) "
+                  f"r={r0/100:.2f} m")
+        else:
+            print(f"  data seed ({cx0/100:.1f}, {cy0/100:.1f}) r={r0/100:.2f} m is off "
+                  f"the field -- falling back to a grid")
+    except Exception:
+        pass
+    for cx0 in (4000., 4500., 5000., 5500.):
+        for cy0 in (1200., 1500., 1850.):
+            for r0 in (750., 900.):
+                seeds.append([cx0, cy0, r0])
+
+    coarse = []
+    for sd in seeds:
+        try:
+            c = least_squares(f, np.concatenate([Hf0.ravel()[:8], sd]),
+                              bounds=(lo, hi), max_nfev=300)
+            coarse.append((c.cost, sd))
+        except Exception:
+            continue
+    coarse.sort(key=lambda z: z[0])
     sol = None
-    for r0 in (750., 900., 1100.):
-        for c0 in ([5000., 1850.],):
-            try:
-                cand = least_squares(f, np.concatenate([Hf0.ravel()[:8], c0, [r0]]),
-                                     bounds=(lo, hi), max_nfev=3000)
-            except Exception:
-                continue
-            if sol is None or cand.cost < sol.cost:
-                sol = cand
+    for _, sd in coarse[:3]:
+        try:
+            cand = least_squares(f, np.concatenate([Hf0.ravel()[:8], sd]),
+                                 bounds=(lo, hi), max_nfev=20000)
+        except Exception:
+            continue
+        if sol is None or cand.cost < sol.cost:
+            sol = cand
+    if sol is None:
+        sys.exit("every start failed to converge")
 else:
     sol = least_squares(f, v0, method="lm", max_nfev=60000)
 print(f"circle weighted at w={w:.2f} relative to the line points")
@@ -164,7 +213,7 @@ cx, cy, r = (sol.x[8], sol.x[9], sol.x[10]) if FREE else (CX, CY, R)
 print(f"circle {'fitted freely' if FREE else 'held fixed'}: "
       f"centre ({cx/100:.2f}, {cy/100:.2f}) m, radius {r/100:.3f} m\n")
 
-print("residuals of the joint fit, in t=3625 pixels:")
+print("residuals of the joint fit, in image pixels:")
 for e, P in sorted(lines.items()):
     l = Hi.T @ field_line(e)
     dd = np.abs(P @ l[:2] + l[2]) / np.hypot(l[0], l[1])

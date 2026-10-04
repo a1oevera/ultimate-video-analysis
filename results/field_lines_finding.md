@@ -3075,3 +3075,51 @@ large far one. Bounds and multi-start do not prevent this -- both were in place.
 says why, because the lines are the direct evidence and the circle is not. The
 earlier runaways at t=2935 (37.5m "circle", 240px lines) and t=3020 (17.0m, 129px)
 were the same failure caught by eye; this is the guard for it.
+
+## 3.61 The circle-tied fits, and the bug that hid them for six attempts
+
+With the halfway line retracted, three frames now carry a circularity-constrained
+fit and none of them references t=4200:
+
+| frame | circle centre | radius | worst line | circle |
+|---|---|---|---|---|
+| t=2935 | (48.69, 15.35) m | 7.683 m | 1.35 px | 2.8 cm |
+| t=3020 | (48.22, 14.61) m | 7.400 m | 0.37 px | 3.0 cm |
+| t=3625 | (49.81, 16.57) m | 8.196 m | 0.82 px | 4.1 cm |
+
+Across the three the centre agrees to **1.59 m in x and 1.96 m in y** and the
+radius spans **7.400-8.196 m**, mean 7.760 m. Regulation 9.15 m is 15% above that
+mean and outside the whole spread. For comparison the earlier separate fits
+disagreed on the centre by 4.48m, so retracting the halfway line tightened the
+agreement substantially.
+
+Caveat on precision: t=3625's radius moved 8.077 -> 8.196 m when the circle
+residual's local scale factor changed from a two-sided to a one-sided derivative.
+That is ~0.12 m of method noise from an implementation choice alone, on top of the
+0.80 m spread between frames.
+
+**The bug.** `run_fit_joint.py` had `calibration_t3625_clicked_REJECTED.json`
+hardcoded as its starting point. When the script was generalised to take any
+clicked file that one replacement silently failed -- it was not asserted -- so
+every run on t=2935 and t=3020 started from the WRONG FRAME's homography. t=3625
+worked throughout, which made it look like a property of the other two frames'
+evidence rather than a path bug.
+
+Six attempts were spent on the wrong layer: trimming the optimiser budget, raising
+it again, seeding the circle from the data, adding a grid fallback, and twice
+mis-splicing the code. What found it was evaluating the script's own residual at
+the standalone run's answer: **cost 41.3 against 3.5e5**. The residual function was
+correct the whole time, which pointed at the inputs rather than the search.
+
+MEASURED afterwards: from the correct start, 24 of 24 grid seeds reach the good
+basin, and the best one ranks first even at 300 evaluations. The search never
+needed tuning.
+
+Kept from those attempts because they are genuine robustness, not the fix: the
+data-derived seed (plausibility-checked -- it really did land at (69.1, -8.6) m,
+off the field, when computed from a bad start), the coarse-then-refine grid, and
+an explicit error when every start fails instead of an AttributeError on None.
+
+Lesson, and it is the second time this session after 3.55: when a tool behaves
+differently from a working standalone version of the same computation, diff the
+two before tuning either.

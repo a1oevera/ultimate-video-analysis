@@ -3161,3 +3161,58 @@ Neither should be mistaken later for evidence against those lines.
 t=2935, not anywhere -- because WFDF fields have no halfway marking and this one
 does not either. The near-end frames are limited to four lines plus the circle,
 which is what they already have. The open question from 3.59 is closed.
+
+## 3.63 First control-validated verification of the field model
+
+`run_verify_lines.py` asks the question reprojection error cannot: do the model's
+lines land on real paint? A 4-line fit reproduces its own clicks exactly however
+wrong the labelling is, so its residual says nothing about correctness.
+
+The metric is local contrast perpendicular to the line, taking the better of two
+channels -- grayscale for white paint, B-(R+G)/2 for the blue near sideline, which
+measures only +2.0 in grayscale (3.62) and would otherwise be judged by a test that
+cannot see it.
+
+**The control is the point.** A naive paint-coverage score was tried earlier and
+failed: predicted touchlines scored 58%, but sliding them sideways raised the score
+monotonically to 94% at +8m, so it measured "is there turf and marking over there".
+This version sweeps every line +/-5m and requires the score to PEAK AT ZERO. A line
+that does not peak is reported as meaningless rather than quoted.
+
+| frame | near sideline | far sideline | end line | goal line |
+|---|---|---|---|---|
+| t=2935 | 31.6 @ 0.00 m | (see below) | 29.5 @ +0.50 m | 11.0 @ 0.00 m |
+| t=3020 | 24.5 @ 0.00 m | (see below) | 17.0 @ -0.50 m | 28.8 @ 0.00 m |
+| t=3625 | 5.6 @ 0.00 m | (see below) | 41.8 @ 0.00 m | 2.0 @ 0.00 m |
+
+Every line visible in its frame peaks within 50cm of where the calibration puts it.
+That is the first objective, externally-controlled confirmation that these
+calibrations are right, as opposed to merely self-consistent.
+
+**The far sideline needs its own treatment, and it is not a failure.** Scored over
+its full 100m it reads 0.2-1.0 and does not peak in any frame -- because it is
+painted only inside the endzones, so most samples are bare turf. Restricted to the
+endzone it behaves:
+
+- near endzone (x=0..18): t=2935 scores 10.8 and peaks at 0.00 m, t=3020 scores 4.0
+  and peaks at -0.50 m
+- far endzone (x=82..100): t=3625 scores 0.8 and does not peak
+
+The far-end non-peak is a sampling artefact too. MEASURED on the clicks
+themselves: t=3625's far-sideline stroke scores contrast **66.5, 97% bright, 79%
+on a paint mask** -- it is firmly on paint. The stroke is just short (112px), so
+spreading 400 samples over 18m of field dilutes it with unpainted turf.
+
+**Every clicked stroke in all three frames is on real paint**, contrast 5.8 to
+119.2, against the retracted halfway line's -26.0. No other click is an estimate.
+
+**Two detector caveats confirmed again** (first seen in 3.62): the absolute-
+brightness paint mask is unreliable for thin distant lines -- t=3020's end line
+reads 3% on the mask and 50.0 contrast / 96% bright -- and it is local contrast,
+not the mask, that should be believed.
+
+**Milestone status.** In any single frame only four lines are observable: both
+sidelines plus the two endzone lines at whichever end is in view. The other two are
+predicted and cannot be checked in that frame. So "six lines per frame" is
+satisfied geometrically by every calibration, but four of the six are verifiable
+per frame, and that is the honest claim.

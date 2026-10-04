@@ -3123,3 +3123,41 @@ an explicit error when every start fails instead of an AttributeError on None.
 Lesson, and it is the second time this session after 3.55: when a tool behaves
 differently from a working standalone version of the same computation, diff the
 two before tuning either.
+
+## 3.62 The halfway line was clicked on bare grass -- it is not a marking at all
+
+3.59 retracted the halfway line on the user's say-so without establishing WHICH
+way it was wrong: misplaced, or not a real feature. It is the second. The two
+points clicked as "halfway" at t=4200 sit on empty turf, and the only paint the
+line touches is where it crosses the centre-circle arc.
+
+Two independent tests on t=4200, both over 300 samples between the clicked points:
+
+| line | on a paint mask | local contrast vs 6px either side | % brighter |
+|---|---|---|---|
+| far sideline | 73% | +70.2 | 88% |
+| goal line x=18 | 98% | +61.8 | 73% |
+| end line x=0 | 16% | +35.2 | 76% |
+| near sideline | 87% | +2.0 | 12% |
+| **RETRACTED halfway** | **3%** | **-26.0** | **1%** |
+
+The halfway line is not merely unpainted, it is *darker* than its surroundings --
+bare turf, partly shaded. Everything else clears both tests once the right test is
+used for it.
+
+**Two detector artefacts in that table, neither a problem with the line:**
+
+- the end line x=0 scores 16% on the paint mask because that mask uses an absolute
+  brightness threshold (V>170) and the end line is thin, distant and partly shaded.
+  On local contrast it scores +35.2 and 76%. Visually confirmed: the clicks sit on
+  the white line along most of their run. The end line is fine.
+- the near sideline scores +2.0 on local contrast because it is BLUE paint, which
+  has almost no luminance contrast against green. On the paint mask, which includes
+  a blue channel, it scores 87%. The near sideline is fine.
+
+Neither should be mistaken later for evidence against those lines.
+
+**Consequence.** There is no fifth line available at x=50 in any frame -- not at
+t=2935, not anywhere -- because WFDF fields have no halfway marking and this one
+does not either. The near-end frames are limited to four lines plus the circle,
+which is what they already have. The open question from 3.59 is closed.

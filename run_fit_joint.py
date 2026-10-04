@@ -44,9 +44,10 @@ The free version is the default here because it is unbiased: all four lines come
 out sub-pixel (max 1.13px) and the circle to 4.1cm. It is a real improvement over
 lines alone and it is still an order of magnitude short of t=4200's quality.
 
-Run:  python3 run_fit_joint.py
+Run:  python3 run_fit_joint.py [clicked.json] [--fixed-circle]
 """
 import json
+import os
 import sys
 import numpy as np
 import cv2
@@ -55,10 +56,16 @@ from scipy.optimize import least_squares
 from frisbee_analysis import UltimatePitchConfiguration
 from frisbee_analysis.calibration import Calibration
 
-FAR = {"near sideline": (1, 7), "far sideline": (2, 8),
-       "goal line": (5, 6), "end line": (7, 8)}
+EDGE_FOR = {
+    "near": {"near sideline": (1, 7), "far sideline": (2, 8),
+             "goal line": (3, 4), "end line": (1, 2), "halfway": (11, 12)},
+    "far":  {"near sideline": (1, 7), "far sideline": (2, 8),
+             "goal line": (5, 6), "end line": (7, 8), "halfway": (11, 12)},
+}
 NAMES = {(1, 7): "near sideline y=0", (2, 8): "far sideline y=37",
-         (5, 6): "goal line x=82", (7, 8): "end line x=100"}
+         (1, 2): "end line x=0", (3, 4): "goal line x=18",
+         (5, 6): "goal line x=82", (7, 8): "end line x=100",
+         (11, 12): "halfway x=50"}
 cfg = UltimatePitchConfiguration()
 CX, CY, R = np.load("outputs/diagnostics/circle_field_t4200.npy")
 
@@ -85,7 +92,7 @@ def scale_px_per_cm(Hf, x, y):
     return np.hypot(*jx) * 0.5 + np.hypot(*jy) * 0.5
 
 
-def make_residuals(lines, circle, free=True):
+def make_residuals(lines, circle, free=True, w=1.0):
     """free=True: the circle's centre and radius are unknowns, so the constraint is
     only that the clicks lie on SOME circle. free=False pins them to t=4200's
     measurement, which is more stable and demonstrably biased -- see the docstring."""
@@ -100,26 +107,57 @@ def make_residuals(lines, circle, free=True):
         if len(circle):
             q = Hi @ np.column_stack([circle, np.ones(len(circle))]).T
             fx, fy = q[0] / q[2], q[1] / q[2]
-            out.append((np.hypot(fx - cx, fy - cy) - r) * scale_px_per_cm(Hf, fx, fy))
+            out.append(w * (np.hypot(fx - cx, fy - cy) - r) * scale_px_per_cm(Hf, fx, fy))
         return np.concatenate(out)
     return f
 
 
-d = json.load(open("outputs/diagnostics/clicked_3625.json"))
-lines = {FAR[L["name"]]: np.array(L["points"], float)
-         for L in d["lines"] if L["name"] in FAR}
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+src = args[0] if args else "outputs/diagnostics/clicked_3625.json"
+d = json.load(open(src))
+table = EDGE_FOR[d.get("end", "near")]
+stem = os.path.splitext(os.path.basename(src))[0].replace("clicked_", "")
+lines = {table[L["name"]]: np.array(L["points"], float)
+         for L in d["lines"] if L["name"] in table and len(L["points"]) >= 2}
 circle = np.array(next((L["points"] for L in d["lines"]
                         if L["name"] == "soccer centre circle"), []), float)
 
 print(f"circle from t=4200: centre ({CX/100:.2f}, {CY/100:.2f}) m, radius {R/100:.3f} m")
 print(f"t=3625 evidence: {len(lines)} lines, {len(circle)} circle points\n")
 
+# BOUNDS AND MULTI-START, because an unbounded free circle runs away. MEASURED at
+# t=2935 and t=3020: from the lines-only fit as a start, the optimiser settled on a
+# 37.5m and a 17.0m "circle" with line residuals of 240px and 129px -- it bought a
+# good circle fit by wrecking the lines. The circle is also outvoted or outvoting on
+# raw point count (16-25 circle clicks against 8 line points), so it is weighted to
+# parity. w is reported because the answer is sensitive to it: pushing w to 5 drags
+# the radius from 7.4m to 9.6m AND the line residuals from 0.4px to 6.6px, so the
+# circle and the lines genuinely disagree and the lines are the direct evidence.
+W_CIRCLE = float(sys.argv[sys.argv.index("--w") + 1]) if "--w" in sys.argv else None
+R_BOUNDS = (500.0, 1500.0)
 FREE = "--fixed-circle" not in sys.argv
 start = Calibration.load("outputs/calibration/calibration_t3625_clicked_REJECTED.json")
 Hf0 = np.linalg.inv(np.asarray(start.H())); Hf0 /= Hf0[2, 2]
 v0 = np.concatenate([Hf0.ravel()[:8], [CX, CY, R]])
 
-sol = least_squares(make_residuals(lines, circle, FREE), v0, method="lm", max_nfev=60000)
+w = W_CIRCLE if W_CIRCLE else (np.sqrt(len(lines) * 2 / len(circle)) if len(circle) else 1.0)
+f = make_residuals(lines, circle, FREE, w)
+if FREE and len(circle):
+    lo = np.concatenate([np.full(8, -np.inf), [3000., -2000., R_BOUNDS[0]]])
+    hi = np.concatenate([np.full(8, np.inf), [8000., 6000., R_BOUNDS[1]]])
+    sol = None
+    for r0 in (750., 900., 1100.):
+        for c0 in ([5000., 1850.],):
+            try:
+                cand = least_squares(f, np.concatenate([Hf0.ravel()[:8], c0, [r0]]),
+                                     bounds=(lo, hi), max_nfev=3000)
+            except Exception:
+                continue
+            if sol is None or cand.cost < sol.cost:
+                sol = cand
+else:
+    sol = least_squares(f, v0, method="lm", max_nfev=60000)
+print(f"circle weighted at w={w:.2f} relative to the line points")
 H = unpack(sol.x[:8])                        # field -> image(3625)
 Hi = np.linalg.inv(H)
 cx, cy, r = (sol.x[8], sol.x[9], sol.x[10]) if FREE else (CX, CY, R)
@@ -140,8 +178,28 @@ print(f"  {'centre circle':22s} max={np.abs(rad).max():6.1f}cm mean={np.abs(rad)
 calib = Calibration(homography=Hi.tolist(),
                     keypoint_labels=[NAMES[e] for e in sorted(lines)] + ["centre circle"],
                     image_points=[], field_points=[],
-                    image_path="torovcanyon.mp4 t=3625s (4 lines + centre circle from t=4200)",
+                    image_path=f"{d.get('source', src)} (lines + centre circle)",
                     line_details=[{"edge": list(e), "points": lines[e].tolist(),
                                    "frame_indices": None} for e in sorted(lines)])
-calib.save("outputs/calibration/calibration_t3625_circletied.json")
-print("\nsaved outputs/calibration/calibration_t3625_circletied.json")
+# REFUSE A FIT THAT BOUGHT THE CIRCLE BY WRECKING THE LINES. MEASURED at t=4200,
+# whose arc is 94 degrees at the extreme left edge of the frame: the free circle ran
+# to the 15m bound and fitted the arc to 0.6cm while the near sideline went to 223px.
+# A tiny circle residual is NOT evidence the fit is good -- a large circle far away
+# matches a shallow arc beautifully. The lines are the direct evidence and they are
+# the test. Bounds and multi-start do not prevent this; only checking does.
+worst = 0.0
+for e, P in sorted(lines.items()):
+    l = Hi.T @ field_line(e)
+    worst = max(worst, (np.abs(P @ l[:2] + l[2]) / np.hypot(l[0], l[1])).max())
+bad = worst > 5.0
+if bad:
+    print(f"\n  *** REFUSED: worst line residual {worst:.1f}px. The circle fitted to "
+          f"{np.abs(rad).mean():.1f}cm\n"
+          f"  *** by distorting the plane instead. This frame's arc is too short or too\n"
+          f"  *** close to the frame edge to constrain a free circle -- it cannot tell a\n"
+          f"  *** small near circle from a large far one. Use the lines alone here.")
+
+out = (f"outputs/calibration/calibration_t{stem}_circletied_REJECTED.json" if bad
+       else f"outputs/calibration/calibration_t{stem}_circletied.json")
+calib.save(out)
+print(f"\nsaved {out}")

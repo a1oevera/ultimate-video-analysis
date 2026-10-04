@@ -3021,3 +3021,57 @@ misses the painted one by several hundred pixels. The search is therefore window
 to t=2795..4310, the span the neighbour-only chain held unaided, inside which the
 t=3625 prediction was measured against the paint at 21cm (sd 1.6cm). Widening it
 needs a per-frame check, not trust.
+
+## 3.59 RETRACTED: the halfway line. The anchor reaches 34.5m, not 50.7m
+
+The user rejected the halfway-line markings as wrong. They are removed from every
+clicked file, and every calibration fitted using one is retired (copies kept in
+`outputs/calibration/_superseded_halfway/`).
+
+**What it costs.** The halfway line at x=50m was t=4200's furthest-out evidence.
+Refitted from its remaining four lines -- near sideline, far sideline, goal line
+x=18, end line x=0 -- the anchor reaches **x = 0 .. 34.5 m**, against 50.7m before,
+and is now an exactly-determined 4-line fit whose 0.00px residual says nothing.
+
+Everything measured through t=4200 beyond 34.5m is therefore unsupported. That
+includes the centre circle at x~48-54m, so these are withdrawn:
+
+- 8.515 m (3.51) and 8.595 m (3.57) -- both measured 15-20m outside validity
+- the "circle fixed to t=4200" variant of the t=3625 fit (3.57)
+- the 4.48m circle-centre disagreement in 3.56, and the 3.94m offset between the
+  circle centre and the clicked halfway line: neither was a real measurement
+
+**It was predicted by its own symptom.** The soccer centre circle is centred on the
+soccer halfway line by definition, yet through t=4200 the circle centre landed
+3.94m off the line clicked as x=50. That was flagged as "either that line isn't the
+soccer halfway, or t=4200 has a ~4m error". It was the line.
+
+**What survives**, because none of it references t=4200: the far-end fit at t=3625
+(4 lines sub-pixel, max 0.62px, circle 4.0cm, radius 8.077m) and the near-end fits
+at t=2935 and t=3020. Three independent frames put the radius at 7.40-8.08 m.
+
+**Correction to 3.58.** That search ranked frames by whether the circle is VISIBLE
+and well resolved. The criterion that matters is whether the frame's clickable line
+evidence BRACKETS the circle, which is a different question. Measured: the nearest
+cross-line to the circle was 0m for t=4200 (the halfway line) and 32m for t=3625,
+t=2935 and t=3020 -- all three of which extrapolate just as far as each other. The
+apparent extrapolation-bias trend in the radius (8.60 at 0m, 8.08/7.68/7.40 at 32m)
+rested on the one frame that has now been retired, so it is not evidence of
+anything.
+
+## 3.60 A tiny circle residual is not evidence the fit is good
+
+t=4200 still contains the arc, at the left edge, so it was given the same
+circularity constraint that works at t=3625. It fails, and the failure is worth
+recording because it looks like success on the circle's own number: the free radius
+ran to the 15m bound and fitted the arc to **0.6 cm** while the near sideline went
+to **223 px**. The optimiser bought a perfect circle by distorting the plane.
+
+A large circle far away matches a shallow arc beautifully. t=4200's arc is 94
+degrees at the extreme frame edge, and it cannot tell a small near circle from a
+large far one. Bounds and multi-start do not prevent this -- both were in place.
+
+`run_fit_joint.py` now refuses any fit whose worst line residual exceeds 5px and
+says why, because the lines are the direct evidence and the circle is not. The
+earlier runaways at t=2935 (37.5m "circle", 240px lines) and t=3020 (17.0m, 129px)
+were the same failure caught by eye; this is the guard for it.

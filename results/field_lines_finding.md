@@ -3289,3 +3289,36 @@ Only an independent check over the line's whole length sees it.
 - a shared coordinate system across the field -> the `_bundle` fits
 
 Both are kept.
+
+## 3.67 The far sideline cannot be improved -- it is the camera position, not the frame
+
+The far end of the bundle rests on t=3625's far-sideline stroke: 112px at the
+horizon. The obvious move is a second far-end frame, since two frames are what made
+the near end strong. There is no better frame.
+
+The footage contains three separate far-end shots. Measured by re-anchoring on the
+t=3625 bundle calibration and hopping only a few chain steps:
+
+| shot | far sideline inside the endzone | image rows |
+|---|---|---|
+| t=3310-3430 | 255-332 px | 371-400 |
+| t=3570-3690 | 259-293 px | 365-371 |
+| t=3950-3990 | 258-338 px | 368-383 |
+
+The horizon in these frames is at rows 360-380. Every far-end shot puts that line
+AT the vanishing point. Combined with 3.54 -- lengthening the stroke from 112px to
+1200px moves the far corner only from 2.12m to ~1.3m, because what is unpinned is
+the line's perpendicular offset, not its direction -- the far end is as good as a
+mid-sideline camera allows. More clicking will not improve it.
+
+The bundle already did what could be done: tying t=3625 to two better-conditioned
+near-end frames raised its weakest line, goal x=82, from a paint score of 2.0 to
+38.0 (3.66).
+
+**A failed search worth recording.** The first version of this ranked t=3300..4050
+and returned midfield frames showing the complete centre circle and no endzone at
+all -- the chain drifts badly that far from its anchor, and the ranking was
+meaningless. Visual inspection caught it immediately; no number did. Re-anchored on
+the bundle calibration with short chain hops, it gives the table above. This is the
+third time this session that a chain-derived ranking has had to be checked against
+the picture before being believed (3.52, 3.58, here).

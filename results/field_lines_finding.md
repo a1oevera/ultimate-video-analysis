@@ -3216,3 +3216,76 @@ sidelines plus the two endzone lines at whichever end is in view. The other two 
 predicted and cannot be checked in that frame. So "six lines per frame" is
 satisfied geometrically by every calibration, but four of the six are verifiable
 per frame, and that is the honest claim.
+
+## 3.64 The near and far ends are tied, through one shared circle
+
+3.56 tried this and failed: forcing both frames to share a circle dragged t=4200's
+clicked lines from sub-pixel to 10px. The diagnosis there was that t=4200 measured
+the circle at x~54m while its validity stopped at 50.7m. t=4200 has since been
+retired (3.59). Retried on the three surviving calibrations, it succeeds on the
+first attempt.
+
+`run_fit_bundle.py` solves three homographies and ONE circle together, 27 unknowns.
+Each frame's lines are scored in its own frame; nothing is transported between
+frames, only the circle is shared.
+
+**Result: worst line residual anywhere 1.76px**, every frame's circle clicks still
+fitting to 3-4cm. Shared circle **centre (49.65, 16.10) m, radius 8.003 m**. The
+near and far ends share a coordinate system.
+
+## 3.65 The circle carries no scale information -- the LINES do
+
+Forcing the radius to a series of fixed values and refitting everything else freely:
+
+| radius forced to | worst line residual | circle rms |
+|---|---|---|
+| 7.00 m | 5.02 px | 3.5 cm |
+| 7.50 m | 2.98 px | 3.5 cm |
+| **8.00 m** | **1.75 px** | 3.5 cm |
+| 8.50 m | 2.60 px | 3.5 cm |
+| 9.00 m | 4.00 px | 3.5 cm |
+| **9.15 m (regulation)** | **4.44 px** | 3.6 cm |
+| 9.50 m | 5.44 px | 3.7 cm |
+| 10.00 m | 7.10 px | 4.0 cm |
+
+A clean parabolic minimum at 8.00 m. Taking twice the minimum residual as a
+bracket gives roughly **7.4-8.8 m**, and regulation sits outside it. These frames
+fit their own lines to 0.37-1.35px when free, so 4.44px is several times the
+achievable click precision rather than absorbable noise.
+
+**The right-hand column is the important one.** Circle rms is FLAT at 3.5cm from
+7m to 10m. The circle fit cannot distinguish any of these radii -- every bit of
+discrimination comes from the lines. This is 3.60's warning turned into a
+measurement, and it explains why every single-frame attempt wandered between 7.4
+and 9.8m: they were being steered by the one quantity in the problem that carries
+no scale information.
+
+## 3.66 The tie costs something, and it is not free
+
+Re-running the paint check (3.63) on the bundled fits against the separate ones:
+
+| frame | line | separate | bundled |
+|---|---|---|---|
+| t=3625 | goal line x=82 | 2.0 @ 0.00 m | **38.0 @ 0.00 m** |
+| t=3625 | end line x=100 | 41.8 @ 0.00 m | 38.5 @ 0.00 m |
+| t=3625 | near sideline | 5.6 @ 0.00 m | 6.4 @ 0.00 m |
+| t=2935 | end line x=0 | 29.5 @ +0.50 m | 37.5 @ 0.00 m |
+| t=2935 | goal line x=18 | 11.0 @ 0.00 m | **7.5 @ +2.00 m (no peak)** |
+| t=3020 | end line x=0 | 17.0 @ -0.50 m | **1.5 @ -1.00 m (no peak)** |
+| t=3020 | goal line x=18 | 28.8 @ 0.00 m | 6.2 @ 0.00 m |
+
+The far-end frame improves markedly -- its weakest line, goal x=82, goes from a
+score of 2.0 to 38.0 -- which is what tying it to two better-conditioned frames
+should do. Each near-end frame pays for it by losing one line's peak.
+
+Note the clicked-point residuals stay under 1.76px throughout, so this is not
+visible in the fit's own numbers: a small rotation pivoting near the clicks moves
+the far ends of a line off the paint while leaving the clicks themselves fine.
+Only an independent check over the line's whole length sees it.
+
+**So there is no single best calibration, and the choice depends on the use:**
+
+- per-frame accuracy, one frame at a time -> the separate `_circletied` fits
+- a shared coordinate system across the field -> the `_bundle` fits
+
+Both are kept.
